@@ -141,13 +141,25 @@ export default function (component) {
     const send = () => {
       if (!data?.tracking_allowed) return
       if (timer !== null) clearTimeout(timer)
-      timer = setTimeout(() => setTriggerValue("hovered", item), 650)
+      timer = setTimeout(() => setTriggerValue("hovered", { ...item, capture_source: "hover", capture_nonce: Date.now() }), 650)
       timers.push(timer)
     }
     card.onpointerenter = send
     card.onfocus = send
     card.onpointerleave = () => { if (timer !== null) clearTimeout(timer) }
     card.onblur = () => { if (timer !== null) clearTimeout(timer) }
+    card.onclick = () => {
+      if (!data?.tracking_allowed) return
+      if (timer !== null) clearTimeout(timer)
+      setTriggerValue("hovered", { ...item, capture_source: "click", capture_nonce: Date.now() })
+    }
+    card.onkeydown = (event) => {
+      if ((event.key === "Enter" || event.key === " ") && data?.tracking_allowed) {
+        event.preventDefault()
+        if (timer !== null) clearTimeout(timer)
+        setTriggerValue("hovered", { ...item, capture_source: "keyboard", capture_nonce: Date.now() })
+      }
+    }
     grid.append(card)
   }
   return () => timers.forEach(clearTimeout)
@@ -162,7 +174,9 @@ def track_buyer_data(db, user: User, module: str, items: list[dict], title: str 
         return
     analytics_ok = latest_consents(db, [user.id]).get((user.id, "analytics"), False)
     if not analytics_ok:
-        st.caption("Hover capture is off for this demo profile. Sign out and choose the interaction-recording option on the login screen to enable it.")
+        st.caption("Interaction capture is off for this demo profile. Sign out and enable recording on the login screen to turn it on.")
+    else:
+        st.caption("Recording is on: hover a card for about 0.7 seconds, focus it, or click it. A confirmation appears after capture.")
     component_key = f"propclue-hover-{user.id}-{module}"
     result = _HOVER_CARD_COMPONENT(
         key=component_key,
@@ -173,17 +187,24 @@ def track_buyer_data(db, user: User, module: str, items: list[dict], title: str 
         return
     hovered = getattr(result, "hovered", None)
     if not isinstance(hovered, dict) or not hovered.get("id"):
+        last_capture = st.session_state.get(f"last_hover_capture_{module}")
+        if last_capture:
+            st.success(f"Captured interaction: {last_capture['label']} · {last_capture['source']}")
         return
-    seen = st.session_state.setdefault("logged_buyer_hovers", set())
     dedupe_key = (module, str(hovered["id"]))
-    if dedupe_key in seen:
-        return
-    seen.add(dedupe_key)
-    project = db.get(Project, int(hovered["project_id"])) if hovered.get("project_id") else None
-    add_event(db, user.id, "Buyer data hovered", project,
-              locality=hovered.get("locality") or None,
-              context={"module": module, "item_type": hovered.get("item_type", "market item"),
-                       "item_id": hovered["id"], "label": hovered.get("label", ""), "hover_ms": 650})
+    last_events = st.session_state.setdefault("last_buyer_hover_events", {})
+    now = datetime.utcnow()
+    previous = last_events.get(dedupe_key)
+    source = hovered.get("capture_source", "hover")
+    if previous is None or (now - previous).total_seconds() >= 5:
+        project = db.get(Project, int(hovered["project_id"])) if hovered.get("project_id") else None
+        add_event(db, user.id, "Buyer data hovered", project,
+                  locality=hovered.get("locality") or None,
+                  context={"module": module, "item_type": hovered.get("item_type", "market item"),
+                           "item_id": hovered["id"], "label": hovered.get("label", ""),
+                           "capture_source": source, "hover_ms": 650})
+        last_events[dedupe_key] = now
+    st.session_state[f"last_hover_capture_{module}"] = {"label": hovered.get("label", "locality"), "source": source}
 
 
 def clamp_score(value: float) -> int:
@@ -480,15 +501,16 @@ def login_screen(db):
 
 
 def brand_lockup(compact: bool = False):
-    size = 36 if compact else 46
+    size = 40 if compact else 54
     icon, name = st.columns([.14, .86], vertical_alignment="center")
     with icon:
         st.image("assets/propclue-logo.png", width=size)
     with name:
-        font_size = ".96rem" if compact else "1.2rem"
+        font_size = "1.25rem" if compact else "1.6rem"
         word_color = "#F5F8FC" if compact else "#0C213C"
         accent = "#5FE3B3" if compact else "#0D9488"
-        st.markdown(f"<div style='line-height:1.15'><b style='font-size:{font_size};letter-spacing:.08em;color:{word_color}'>PROPCLUE</b><br><small style='font-size:.66rem;letter-spacing:.12em;color:{accent};font-weight:800'>REAL ESTATE INTELLIGENCE</small></div>", unsafe_allow_html=True)
+        tagline_size = ".76rem" if compact else ".86rem"
+        st.markdown(f"<div style='line-height:1.15'><b style='font-size:{font_size};letter-spacing:.08em;color:{word_color}'>PROPCLUE</b><br><small style='font-size:{tagline_size};letter-spacing:.12em;color:{accent};font-weight:800'>REAL ESTATE INTELLIGENCE</small></div>", unsafe_allow_html=True)
 
 
 def top_header(title: str, subtitle: str = ""):
@@ -696,9 +718,6 @@ def show_discover(db, user: User, city: str, show_header: bool = True):
     profile = db.get(Project, profile_id) if profile_id else None
     if profile and profile.city == city:
         show_project_profile(db, user, profile)
-    st.subheader("Ask PropClue")
-    st.caption("Ask about a project, locality, appreciation, nearby amenities, or which legal checks are missing.")
-    show_assistant(db, user, city, with_header=False)
 
 
 def show_project_profile(db, user: User, project: Project):
@@ -780,8 +799,10 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     selected_project = next((p for p in locality_projects if p.id == choices[chosen_label]), None) if choices[chosen_label] else None
     poi_types = st.multiselect("Nearby demo points", ["Metro", "IT park", "Business hub", "Hospital", "School", "Mall", "Eatery"],
                                default=["Metro", "IT park", "Hospital", "School"], key="map-poi-types")
-    show_areas = st.toggle("Show locality coverage circles", value=True, key="map-coverage-toggle")
-    st.caption("Employment points mean illustrative IT parks/business hubs; transit points mean illustrative metro nodes. These synthetic pins and straight-line distances are not live POIs or routes. Coverage shapes are broad visual guides, not surveyed boundaries.")
+    ring_controls = st.columns(2)
+    show_areas = ring_controls[0].toggle("Locality circles · 1 km guide", value=True, key="map-coverage-toggle")
+    show_project_rings = ring_controls[1].toggle("Project circles · 250 m guide", value=True, key="map-project-circle-toggle")
+    st.caption("Employment points are illustrative IT parks/business hubs; transit points are illustrative metro nodes. All pins and distance estimates are synthetic straight-line examples. Locality circles and project rings are visual guides, not boundaries or measured catchments.")
     poi_offsets = {"Metro": (-.009, -.006), "IT park": (.010, .008), "Business hub": (.006, -.010),
                    "Hospital": (-.006, .010), "School": (.012, -.002), "Mall": (-.012, .003), "Eatery": (.003, .013)}
     poi_data = []
@@ -803,21 +824,28 @@ def show_map(db, user: User, city: str, show_header: bool = True):
             "detail": f"{p.configuration} · {p.area_sqft:,} sq ft · USP: {usps}",
             "status": "Legal/title/technical: not connected · bank: not verified · tax: not connected",
             "price": f"Asking {money(p.asking_price, True)} · synthetic point",
-            "coordinates": [lon, lat], "kind": "Project"})
+            "coordinates": [lon, lat], "kind": "Project", "circle_radius_m": 250})
     layers = []
     if show_areas:
-        polys = []
+        locality_circles = []
         for loc in locs:
-            lat, lon = loc.latitude, loc.longitude
-            d = .018
             score, _ = locality_score_breakdown(db, loc)
-            polys.append({"name": f"{loc.name} coverage guide", "locality": loc.name,
-                "detail": f"Illustrative coverage · locality demo score {score}/100", "status": "Not a legal or parcel boundary",
-                "price": "", "polygon": [[lon-d, lat-d], [lon+d, lat-d], [lon+d, lat+d], [lon-d, lat+d], [lon-d, lat-d]]})
-        layers.append(pdk.Layer("PolygonLayer", data=polys, get_polygon="polygon", get_fill_color="[18, 138, 129, 18]",
-                                get_line_color="[14, 138, 129, 150]", line_width_min_pixels=1, pickable=True, stroked=True, filled=True))
+            locality_circles.append({"name": f"{loc.name} locality circle", "locality": loc.name,
+                "detail": f"1 km illustrative radius · locality demo score {score}/100",
+                "status": "Not a surveyed boundary", "price": "",
+                "coordinates": [loc.longitude, loc.latitude]})
+        layers.append(pdk.Layer("ScatterplotLayer", data=locality_circles, get_position="coordinates", get_radius=1000,
+            radius_units="meters", radius_min_pixels=26, radius_max_pixels=230,
+            get_fill_color="[13, 148, 136, 24]", get_line_color="[13, 148, 136, 115]",
+            line_width_min_pixels=2, stroked=True, filled=True, pickable=True))
+    if show_project_rings and project_data:
+        layers.append(pdk.Layer("ScatterplotLayer", data=project_data, get_position="coordinates", get_radius="circle_radius_m",
+            radius_units="meters", radius_min_pixels=14, radius_max_pixels=90,
+            get_fill_color="[59, 130, 246, 30]", get_line_color="[59, 130, 246, 145]",
+            line_width_min_pixels=2, stroked=True, filled=True, pickable=True))
     if project_data:
-        layers.append(pdk.Layer("ScatterplotLayer", data=project_data, get_position="coordinates", get_radius=105,
+        layers.append(pdk.Layer("ScatterplotLayer", data=project_data, get_position="coordinates", get_radius=180,
+            radius_units="meters", radius_min_pixels=7, radius_max_pixels=18,
             get_fill_color="[14, 138, 129, 220]", get_line_color="[255,255,255,240]", line_width_min_pixels=1, pickable=True, opacity=.9))
     if poi_data:
         layers.append(pdk.Layer("ScatterplotLayer", data=poi_data, get_position="coordinates", get_radius=75,
@@ -829,23 +857,62 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     deck = pdk.Deck(layers=layers, initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=zoom, pitch=20),
         map_style=map_style, tooltip={"html": "<b>{name}</b><br/>{locality}<br/>{detail}<br/>{status}<br/>{price}", "style": {"color": "white"}})
     st.pydeck_chart(deck, width="stretch", height=510, key=f"map-{city}-{selected.name}-{choices[chosen_label] or 'all'}", alt=f"Synthetic {city} project and nearby point map focused on {selected.name}")
+    latest_obs = db.scalar(select(MarketObservation).where(MarketObservation.locality_id == selected.id).order_by(MarketObservation.month.desc()).limit(1))
+    current_psf, qoq, yoy = locality_appreciation(db, selected.id)
+    median_psf = float(pd.Series([p.asking_price / max(p.area_sqft, 1) for p in locality_projects]).median()) if locality_projects else None
+    st.markdown(f"#### {selected.name} map snapshot")
+    snap = st.columns(4)
+    snap[0].metric("Project records", f"{len(locality_projects)}", border=True)
+    snap[1].metric("Median project ask", f"₹{median_psf:,.0f}/sq ft" if median_psf is not None else "Unavailable", border=True)
+    snap[2].metric("Locality asking trend", f"{qoq:+.1f}% QoQ · {yoy:+.1f}% YoY" if qoq is not None and yoy is not None else "Unavailable", border=True)
+    snap[3].metric("Latest demo demand", f"{latest_obs.enquiries:,} enquiries", help=f"Generated availability proxy: {latest_obs.available_units:,} units in the latest monthly observation." if latest_obs else "No generated monthly observation is available.", border=True)
+    st.caption("Legend: teal rings are illustrative locality coverage; blue rings are illustrative project areas; solid teal points are project markers; amber points are nearby demo amenities.")
     left, right = st.columns([1, 1])
     with left:
         st.markdown(f"### {selected.name} · {selected.scope}")
         selected_score, _ = locality_score_breakdown(db, selected)
         st.write(f"Locality intelligence demo score **{selected_score}/100** · indicative base asking **{money(selected.base_rate)}/sq ft** · demo rental yield **{selected.rental_yield:.1f}%")
-        st.caption("The selected project focus zooms to a synthetic point only. No building footprint, land parcel, title boundary, tax ledger, approval database or live map feed is connected.")
+        st.caption("Zooming to a project centers the synthetic project point. No building footprint, parcel boundary, title boundary, tax ledger, approval database or live map feed is connected.")
     with right:
         if st.button("Record locality exploration", type="primary", key="record-map-exploration"):
             add_event(db, user.id, "Map area searched", locality=selected.name, context={"city": city, "scope": selected.scope})
             st.success("Demo map-search event recorded.")
     if selected_project:
-        st.markdown("#### Property selling points")
-        st.write(" · ".join(project_usps(db, selected_project)))
-        st.caption("Nearby categories shown above are synthetic examples. The project profile lists illustrative distance estimates and unverified legal/bank status.")
-    map_hover = [{"id": f"map-locality-{loc.id}", "item_type": "locality", "label": loc.name,
-                  "detail": f"{locality_score_breakdown(db, loc)[0]}/100 demo score · {loc.scope}", "locality": loc.name} for loc in locs[:8]]
-    track_buyer_data(db, user, "map-explorer", map_hover, "Quick scan · hover a locality card to record an opted-in interaction")
+        st.markdown(f"#### {selected_project.name} · project snapshot")
+        detail_cols = st.columns(4)
+        detail_cols[0].metric("Asking price", f"{money(selected_project.asking_price, True)}", border=True)
+        detail_cols[1].metric("Asking / sq ft", f"₹{selected_project.asking_price/max(selected_project.area_sqft,1):,.0f}", border=True)
+        detail_cols[2].metric("Area · configuration", f"{selected_project.area_sqft:,} sq ft · {selected_project.configuration}", border=True)
+        detail_cols[3].metric("Project stage", selected_project.status, border=True)
+        st.write("**Selling points · synthetic demo:** " + " · ".join(project_usps(db, selected_project)))
+        proximity = project_proximity(selected_project)
+        nearby = pd.DataFrame([
+            {"Nearby category": "Metro", "Illustrative distance": f"{proximity['metro']:.1f} km"},
+            {"Nearby category": "IT park", "Illustrative distance": f"{proximity['it_park']:.1f} km"},
+            {"Nearby category": "Business hub", "Illustrative distance": f"{proximity['business_hub']:.1f} km"},
+            {"Nearby category": "Hospital", "Illustrative distance": f"{proximity['hospital']:.1f} km"},
+            {"Nearby category": "School", "Illustrative distance": f"{proximity['school']:.1f} km"},
+            {"Nearby category": "Mall", "Illustrative distance": f"{proximity['mall']:.1f} km"},
+            {"Nearby category": "Eatery", "Illustrative distance": f"{proximity['eatery']:.1f} km"},
+        ])
+        st.dataframe(nearby, width="stretch", hide_index=True, alt="Synthetic straight-line nearby amenity estimates for the selected project")
+        st.caption("Distances and nearby points are generated examples, not live routing results. Legal/title/technical clearance, bank approval and property-tax status remain unverified or unconnected.")
+    else:
+        st.info("Choose a project/building above to reveal its synthetic pricing, selling points, nearby-place estimates and verification checklist.")
+    map_hover = []
+    for loc in locs:
+        score, _ = locality_score_breakdown(db, loc)
+        locality_projects = [p for p in projects if p.locality_id == loc.id]
+        asking = pd.Series([p.asking_price / max(p.area_sqft, 1) for p in locality_projects]).median() if locality_projects else None
+        _, _, loc_yoy = locality_appreciation(db, loc.id)
+        details = f"{score}/100 demo score · {len(locality_projects)} project records"
+        if asking is not None:
+            details += f" · median ask ₹{asking:,.0f}/sq ft"
+        if loc_yoy is not None:
+            details += f" · generated YoY {loc_yoy:+.1f}%"
+        map_hover.append({"id": f"map-locality-{loc.id}", "item_type": "locality", "label": loc.name,
+                          "detail": details, "locality": loc.name})
+    track_buyer_data(db, user, "map-explorer", map_hover, "Quick scan · hover for 0.7 sec, click or focus a locality card to capture interest")
 
 
 def show_market(db, city: str, show_header: bool = True):
@@ -1038,6 +1105,20 @@ def show_leads(db, user: User, city: str):
                        and (locality_filter == "Any locality" or r["Locality"] == locality_filter)
                        and (project_filter == "Any project" or r["Project"] == project_filter)
                        and (datetime.utcnow()-r["Lead"].last_activity).days <= days]
+            st.markdown("#### Campaign agent")
+            st.caption("A reviewable, multi-step campaign workflow inspired by the Utkarsh demo. The agent prepares a soft-campaign preview; it does not contact buyers.")
+            stage_cols = st.columns(4)
+            stage_data = [
+                ("01 · Audience", f"{len(records)} lead records", "Filters by locality, project and recent activity."),
+                ("02 · Consent gate", f"{len(segment)} eligible", "Excludes anyone without builder-marketing consent."),
+                ("03 · Channel", "Choose below", "SMS, WhatsApp or voice bot preview."),
+                ("04 · Outcome", "Simulation only", "Illustrative responses; no delivery or send."),
+            ]
+            for col, (title, value, detail) in zip(stage_cols, stage_data):
+                with col.container(border=True):
+                    st.caption(title)
+                    st.markdown(f"**{value}**")
+                    st.caption(detail)
             st.metric("Consent-eligible audience", len(segment), help="Filtered to buyers with synthetic builder-marketing consent.", border=True)
             channel = st.radio("Soft campaign channel", ["SMS · Twilio-ready", "WhatsApp · Twilio-ready", "Voice bot · Twilio-ready"], horizontal=True, key="campaign-channel")
             campaign_name = st.text_input("Campaign name", value=f"{city} buyer update · demo", key="soft-campaign-name")
@@ -1045,7 +1126,7 @@ def show_leads(db, user: User, city: str):
             twilio_ready = all(os.environ.get(key) for key in ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"])
             st.caption(f"{channel} · Twilio connection: {'credentials detected; sending remains disabled in this demo' if twilio_ready else 'not configured'}. No SMS, WhatsApp message, voice call or automated campaign is sent.")
             st.info("Campaigns are soft simulations only. The app stores a campaign summary, not recipients or message delivery data. Twilio credentials are not read from this screen, and there is no live send action.")
-            if st.button("Simulate campaign", type="primary", disabled=not segment, key="simulate-unified-campaign"):
+            if st.button("Run campaign agent preview", type="primary", disabled=not segment, key="simulate-unified-campaign"):
                 clicks = int(round(len(segment) * random.Random(len(segment) + len(campaign_name) + len(channel)).uniform(.12, .38)))
                 campaign = Campaign(builder_id=user.builder_id, name=campaign_name.strip() or "Untitled demo campaign",
                     segment=f"{channel} · {locality_filter} · {project_filter} · activity {recency_days} · consent eligible",
@@ -1053,7 +1134,7 @@ def show_leads(db, user: User, city: str):
                 db.add(campaign)
                 db.add(AuditLog(actor_id=user.id, action="campaign_simulated", detail=campaign.name))
                 db.commit()
-                st.success(f"Simulation saved: {len(segment)} eligible demo buyers and {clicks} illustrative responses. Nothing was sent.")
+                st.success(f"Campaign agent complete · audience checked: {len(records)} · consent eligible: {len(segment)} · channel: {channel.split(' ·')[0]} · illustrative responses: {clicks}. Nothing was sent.")
             campaigns = db.scalars(select(Campaign).where(Campaign.builder_id == user.builder_id).order_by(Campaign.created_at.desc())).all()
             st.subheader("Previous soft campaign simulations")
             st.dataframe(pd.DataFrame([{"Campaign": c.name, "Segment / channel": c.segment, "Eligible": c.eligible_count,
@@ -1198,7 +1279,7 @@ def assistant_answer(db, user: User, city: str, question: str) -> str:
     return "Ask about a project’s USP or demo legal checklist, a locality’s QoQ/YoY trend, nearby highlights, or select a project to get a focused answer."
 
 
-def show_assistant(db, user: User, city: str, with_header: bool = True):
+def show_assistant(db, user: User, city: str, with_header: bool = True, floating: bool = False):
     if with_header:
         top_header("PropClue assistant", "Ask in plain language about a project, market trend, documents or nearby amenities.")
     st.caption("Answers query the synthetic demo database. No external LLM is called; legal and bank checks are not connected.")
@@ -1210,17 +1291,24 @@ def show_assistant(db, user: User, city: str, with_header: bool = True):
         st.session_state[conv_key] = conversation.id
     cid = st.session_state[conv_key]
     messages = db.scalars(select(AIMessage).where(AIMessage.conversation_id == cid).order_by(AIMessage.created_at)).all()
-    for message in messages[-20:]:
-        with st.chat_message(message.role):
-            st.markdown(message.content)
-    question = st.chat_input("Ask about this property, QoQ/YoY, documents, or nearby places", key=f"chat-{user.id}")
-    if question:
-        answer = assistant_answer(db, user, city, question)
-        db.add_all([AIMessage(conversation_id=cid, role="user", content=question), AIMessage(conversation_id=cid, role="assistant", content=answer)])
-        db.commit()
-        st.rerun()
-    with st.expander("Try a prompt"):
-        st.write("Properties under ₹10k/sq ft? · Details for Devanahalli Residences 42 · Is this property dispute-free? · Show EC and Khata status · What is the YoY appreciation? · What are this project's USPs?")
+    message_area = st.container(height=340 if floating else None) if floating else st.container()
+    with message_area:
+        for message in messages[-20:]:
+            with st.chat_message(message.role):
+                st.markdown(message.content)
+    if floating:
+        with st.form(f"floating-chat-form-{user.id}", clear_on_submit=True):
+            question = st.text_input("Ask PropClue", placeholder="Ask about a project, price, or documents…", label_visibility="collapsed")
+            submitted = st.form_submit_button("Send message", type="primary", width="stretch")
+        if submitted and question.strip():
+            answer = assistant_answer(db, user, city, question.strip())
+            db.add_all([AIMessage(conversation_id=cid, role="user", content=question.strip()), AIMessage(conversation_id=cid, role="assistant", content=answer)])
+            db.commit()
+            st.rerun()
+        st.caption("Demo answers use synthetic data. Legal and bank checks are not verified.")
+        with st.expander("Try a prompt"):
+            st.write("Properties under ₹10k/sq ft? · Details for Devanahalli Residences 42 · Is this property dispute-free? · Show EC and Khata status · What is the YoY appreciation? · What are this project's USPs?")
+        return
 def show_activity(db, user: User):
     top_header("My activity", "A timeline of demo events attached to your buyer account.")
     rows = db.scalars(select(Event).where(Event.buyer_id == user.id).order_by(Event.event_at.desc()).limit(80)).all()
@@ -1389,16 +1477,6 @@ def main():
                     st.logout()
                 st.rerun()
             st.markdown("---")
-            st.markdown("**LLM token usage**")
-            st.table(pd.DataFrame([
-                {"Stage": "Input", "Tokens": 0},
-                {"Stage": "Output", "Tokens": 0},
-                {"Stage": "Intent", "Tokens": 0},
-                {"Stage": "SQL generation", "Tokens": 0},
-                {"Stage": "AI insights", "Tokens": 0},
-            ]))
-            st.caption("Zero external LLM calls in this demo.")
-            st.caption("SYNTHETIC DEMO · not verified")
         page_groups = {
             "buyer": [
                 st.Page(lambda: show_market_workspace(db, user, city), title="Market overview", url_path="market-overview", icon=":material/monitoring:"),
@@ -1408,7 +1486,6 @@ def main():
                 st.Page(lambda: show_builder_portfolio(db, user, city), title="Portfolio MIS", url_path="portfolio-overview", icon=":material/monitoring:"),
                 st.Page(lambda: show_builder_market_workspace(db, user, city), title="Market intelligence", url_path="builder-market", icon=":material/trending_up:"),
                 st.Page(lambda: show_leads(db, user, city), title="Buyer demand & campaigns", url_path="buyer-demand-leads", icon=":material/group:"),
-                st.Page(lambda: show_assistant(db, user, city), title="PropClue assistant", url_path="ai-assistant", icon=":material/smart_toy:"),
             ],
             "admin": [
                 st.Page(lambda: show_admin(db, user), title="Platform overview", url_path="platform-overview", icon=":material/space_dashboard:"),
@@ -1417,7 +1494,36 @@ def main():
                 st.Page(lambda: show_market(db, city), title="Market intelligence", url_path="admin-market", icon=":material/trending_up:"),
             ],
         }
-        navigation = st.navigation({user.role.title(): page_groups.get(user.role, page_groups["buyer"])}, position="sidebar")
+        role_pages = page_groups.get(user.role, page_groups["buyer"])
+        navigation = st.navigation({user.role.title(): role_pages}, position="hidden")
+        with st.sidebar:
+            st.markdown("**WORKSPACE MODULES**")
+            for page in role_pages:
+                st.page_link(page)
+            st.markdown("---")
+            st.markdown("**LLM TOKEN USAGE**")
+            st.table(pd.DataFrame([
+                {"Stage": "Input", "Tokens": 0},
+                {"Stage": "Output", "Tokens": 0},
+                {"Stage": "Intent", "Tokens": 0},
+                {"Stage": "SQL generation", "Tokens": 0},
+                {"Stage": "AI insights", "Tokens": 0},
+            ]))
+            st.caption("Zero external LLM calls in this demo.")
+            st.caption("SYNTHETIC DEMO · not verified")
+        st.markdown("""
+        <style>
+        div[data-testid="stPopover"] { position: fixed !important; display: inline-flex !important; width: max-content !important; max-width: calc(100vw - 1.5rem) !important; left: auto !important; right: 1.5rem !important; bottom: 1.25rem !important; z-index: 99999 !important; }
+        div[data-testid="stPopover"] button, button[title="Open the PropClue property assistant"] { display: inline-flex !important; width: 220px !important; min-width: 220px !important; min-height: 64px !important; justify-content: center !important; border-radius: 999px !important; padding: .8rem 1.45rem !important; box-shadow: 0 10px 32px rgba(14, 116, 109, .38) !important; font-weight: 800 !important; font-size: 1.2rem !important; border: 2px solid rgba(255,255,255,.9) !important; }
+        div[data-testid="stPopover"] button p, button[title="Open the PropClue property assistant"] p { font-size: 1.2rem !important; font-weight: 800 !important; }
+        div[data-testid="stPopoverBody"] { width: min(410px, calc(100vw - 2rem)) !important; }
+        @media (max-width: 640px) { div[data-testid="stPopover"] { right: .75rem !important; bottom: .75rem !important; } div[data-testid="stPopover"] button, button[title="Open the PropClue property assistant"] { width: 190px !important; min-width: 190px !important; min-height: 56px !important; font-size: 1.05rem !important; } }
+        </style>
+        """, unsafe_allow_html=True)
+        with st.popover("💬  Ask PropClue", type="primary", help="Open the PropClue property assistant"):
+            st.markdown("#### Your property assistant")
+            st.caption("Ask about projects, prices, market trends, or document checks.")
+            show_assistant(db, user, city, with_header=False, floating=True)
         navigation.run()
 
 
