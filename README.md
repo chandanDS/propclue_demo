@@ -19,7 +19,7 @@ Open <http://localhost:8501>. On first run, the app creates `data/propclue_demo.
 
 ### Demo personas
 
-The start screen offers **Enter as Buyer**, **Enter as Builder**, and **Enter as Admin**. These are role-play personas over synthetic records, not authenticated accounts.
+The start screen lets you choose **Buyer** or **Builder** and enter any username and password. The username, chosen role, and market are stored in the demo `users` table; the password is never saved. This is demo-only access, not authentication. Admin is available only through configured OIDC role mapping or a seeded admin account.
 
 For authenticated access, configure Streamlit's built-in OpenID Connect support in `.streamlit/secrets.toml` or Community Cloud app secrets, then map verified emails to roles:
 
@@ -50,15 +50,23 @@ DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@HOST:5432/propclue"
 
 ## What works in this demo
 
-- Role-specific buyer, builder, and admin navigation, with optional OIDC through Streamlit's built-in sign-in.
+- Buyer and builder demo login with role stored in the `users` table, plus optional OIDC role mapping. Buyer navigation is grouped into **Market overview** (pulse + intelligence) and **Explore properties** (discover + map + compare/save).
 - Bengaluru, Delhi, and clearly separated NCR locality filters, with synthetic project inventory.
-- Interactive PyDeck map with synthetic project points, illustrative locality coverage areas, and optional transit/employment markers.
+- Interactive PyDeck map with project focus zoom, corrected hover details, synthetic metro/IT/business/hospital/school/mall/eatery points, and illustrative locality coverage shapes.
 - Project intelligence profiles, project saving, up-to-four project comparison, and CSV report downloads.
 - 36-month asking-price and simulated-transaction series stored separately, rental indicators, supply, absorption, and enquiry charts.
+- Buyer-first market pulse with a focused two-line price view, 12-month movement, asking-to-simulated gap, recent enquiry signals, and explicit definitions for every headline count.
+- Transparent weighted locality demo score: connectivity 16%, employment access 14%, social infrastructure 13%, affordability 13%, price momentum 12%, rental demand 10%, supply-demand balance 10%, environmental quality 8%, and infrastructure certainty 4%.
+- Consent-gated hover capture for buyer project/locality cards across Market pulse, Discover, Map, Market intelligence, and Compare & saved. Hover events appear in the buyer activity timeline and do not affect the buyer-intent score.
 - Buyer event timeline and timestamped purpose-specific consent history.
 - Buyer intent scoring with recency decay and a reason list. Scores use demo engagement events only.
 - Builder portfolio filtering, consent-aware lead views, CSV export, segment filters, and simulated campaigns. No message is sent.
-- Deterministic database-backed assistant answers and persisted demo conversation history; no paid LLM key is required.
+- Builder Portfolio MIS with a portfolio-project selector, daily/7/30/60/90-day simulated booking signals, engaged-lead and follow-up queues, inventory proxy, completion proxy, and current launch-stage records.
+- Builder Market Intelligence combines market trends, synthetic land/development map points, and transparent pricing scenario cues. Owner/title/approval records, parcel boundaries, and actual plot availability are not connected.
+- Buyer demand and soft campaigns share one builder workspace, with locality/project/activity segmentation and SMS/WhatsApp/voice-bot simulation choices. Twilio is not connected and no messages or calls are sent.
+- Persistent left-sidebar token indicator reports zero LLM calls/tokens with the current deterministic assistant.
+- Buyer natural-language assistant embedded in project discovery, with synthetic QoQ/YoY and USP answers and explicit EC, Khata, title, dispute, tax, technical-clearance, and bank-document status; no paid LLM key is required.
+- Discover filters for synthetic distance estimates to metro, IT parks, hospitals, malls and schools; project cards include synthetic USPs and same-locality/type/configuration price comparisons.
 - Admin data coverage/licensing registry, audit records, and a guarded synthetic-data reset.
 - SQLAlchemy models work with local SQLite or a PostgreSQL `DATABASE_URL`.
 
@@ -67,7 +75,9 @@ DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@HOST:5432/propclue"
 - The demo uses a compact relational model for the core walkthrough, not every table in the full product brief. It does not include PostGIS, Alembic migrations, a separate FastAPI backend, payment workflows, or production-grade authorization controls. The no-secret role switcher is for demo data only; configure OIDC and review role mapping before sharing beyond a trusted demo.
 - Data events, enquiries, project values, localities, legal statuses, environmental signals, infrastructure points, and buyer identities are generated. Map coverage areas are illustrative shapes, not cadastral or locality boundaries.
 - Builder contact, email, SMS, and WhatsApp delivery are intentionally simulated only.
+- Builder booking counts, locality-allocated inventory, completion percentages, and land opportunity markers are display proxies generated for the prototype; they are not operational MIS or acquisition leads. Pricing cues use synthetic locality asking/supply/enquiry signals and omit live macroeconomic inputs.
 - The assistant is deterministic and answers a small set of analytical question patterns from the database. It is not a general-purpose language model.
+- AI usage currently reports zero LLM tokens: intent scoring is local Python, queries use parameterized SQLAlchemy, and insights are deterministic. Flood exposure demo values are synthetic seed placeholders, not calculated from real flood observations; the locality composite uses `100 - flood placeholder` as its environmental component.
 - External providers are listed for evaluation only. No external records or provider APIs are connected.
 
 ## Data provenance and procurement checklist

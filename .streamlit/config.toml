@@ -1,24 +1,24 @@
 [theme]
 base = "light"
-primaryColor = "#0E8A81"
-backgroundColor = "#F5F7FA"
+primaryColor = "#0D9488"
+backgroundColor = "#F8FAFC"
 secondaryBackgroundColor = "#FFFFFF"
-textColor = "#14243A"
-font = "sans serif"
-headingFont = "sans serif"
+textColor = "#0C213C"
+font = "Inter"
+headingFont = "Inter"
 showWidgetBorder = true
 showSidebarBorder = true
-borderColor = "#E3E9F0"
+borderColor = "#E2E8F0"
 baseRadius = "large"
 buttonRadius = "large"
-chartCategoricalColors = ["#0E8A81", "#2E6BB1", "#E9A23B", "#8B6BB4", "#D66853", "#607D8B"]
+chartCategoricalColors = ["#0D9488", "#3B82F6", "#03B1AC", "#F59E0B", "#8B5CF6", "#64748B"]
 
 [theme.sidebar]
-backgroundColor = "#10243D"
-secondaryBackgroundColor = "#1B3552"
+backgroundColor = "#0C213C"
+secondaryBackgroundColor = "#0A2832"
 textColor = "#F5F8FC"
-primaryColor = "#51C7B8"
-borderColor = "#294562"
+primaryColor = "#5FE3B3"
+borderColor = "#234356"
 
 [server]
 headless = true
