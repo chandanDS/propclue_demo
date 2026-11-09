@@ -1161,14 +1161,6 @@ def show_assistant(db, user: User, city: str, with_header: bool = True):
         st.rerun()
     with st.expander("Try a prompt"):
         st.write("Is this property dispute-free? · Show EC and Khata status · What is the bank approval status? · What is the YoY appreciation? · What are this project's USPs?")
-    with st.expander("AI usage and token ledger"):
-        st.metric("External LLM calls", "0", help="This demo uses deterministic Python rules and SQLAlchemy queries. No prompt is sent to an LLM.", border=True)
-        usage = pd.DataFrame([{"Stage": stage, "LLM tokens": 0, "Status": status} for stage, status in [
-            ("User input", "Not invoked"), ("Assistant output", "Not invoked"), ("Buyer intent scoring", "Local Python scoring"),
-            ("SQL query generation", "SQLAlchemy parameters; no text-to-SQL model"), ("AI insights", "Deterministic database rules")]])
-        st.dataframe(usage, width="stretch", hide_index=True, alt="LLM token use by stage, all zero because no LLM is called")
-
-
 def show_activity(db, user: User):
     top_header("My activity", "A timeline of demo events attached to your buyer account.")
     rows = db.scalars(select(Event).where(Event.buyer_id == user.id).order_by(Event.event_at.desc()).limit(80)).all()
