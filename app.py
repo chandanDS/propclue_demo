@@ -1113,6 +1113,66 @@ def assistant_answer(db, user: User, city: str, question: str) -> str:
         if not project:
             return "I can’t verify legal or bank status from this demo. Choose a project in Discover or Map, then ask again. No EC, Khata, title, RERA, tax, dispute or bank-letter source is connected, so I can’t call any property dispute-free. Legal/title scores are not assessed."
         return (f"For **{project.name}**, the demo has no official document or approval integrations. Dispute-free status is **not verified**; EC, Khata, title chain, RERA/approvals, tax receipts and technical clearance are **not connected**. Legal/title score: **not assessed**. Bank approval: **not verified**, and no bank approval letter is attached. Please obtain and independently verify certified documents before making a decision.")
+    market_projects = db.scalars(select(Project).where(Project.city == city)).all()
+    psf_query = re.search(r"(?:per\s*(?:sq\.?\s*ft|sft|sqft|square\s*(?:foot|feet))|psf)", q)
+    limit_match = re.search(r"(?:under|below|less\s+than|up\s+to|upto|at\s+most|max(?:imum)?)\s*(?:₹|rs\.?\s*)?([\d,]+(?:\.\d+)?)\s*(k|thousand|lakh|lac|l|cr|crore)?", q)
+    if psf_query and limit_match:
+        amount = float(limit_match.group(1).replace(",", ""))
+        unit = (limit_match.group(2) or "").lower()
+        amount *= {"k": 1_000, "thousand": 1_000, "lakh": 100_000, "lac": 100_000,
+                   "l": 100_000, "cr": 10_000_000, "crore": 10_000_000}.get(unit, 1)
+        matches = sorted([p for p in market_projects if p.asking_price / max(p.area_sqft, 1) <= amount],
+                         key=lambda p: p.asking_price / max(p.area_sqft, 1))
+        if not matches:
+            return f"I couldn’t find a synthetic {city} project below ₹{amount:,.0f}/sq ft. Try a higher cap or another locality. Asking prices are generated demo values, not live listings."
+        lines = [f"**{p.name}** · {p.locality.name} · {p.property_type}, {p.configuration} · ₹{p.asking_price / max(p.area_sqft, 1):,.0f}/sq ft · {money(p.asking_price, True)} total" for p in matches[:8]]
+        more = f" Showing 8 of {len(matches)} matches." if len(matches) > 8 else ""
+        return f"Synthetic {city} project records at or below ₹{amount:,.0f}/sq ft:{more}\n\n" + "\n\n".join(lines) + "\n\nThese are generated comparison records, not verified or currently available properties."
+
+    def project_match(text: str) -> tuple[Project | None, bool]:
+        normalized_question = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+        normalized_names = {p.id: re.sub(r"[^a-z0-9]+", " ", p.name.lower()).strip() for p in market_projects}
+        exact = [p for p in market_projects if normalized_names[p.id] and normalized_names[p.id] in normalized_question]
+        if exact:
+            return exact[0], True
+        stop = {"give", "me", "show", "property", "properties", "project", "details", "detail", "for", "fro", "about", "tell", "info", "information", "please", "the", "a", "an", "of", "in", "at", "what", "is", "are", "can", "you", "to", "this", "that", "and", "with"}
+        query_tokens = set(normalized_question.split()) - stop
+        ranked = []
+        for p in market_projects:
+            name_tokens = set(normalized_names[p.id].split())
+            overlap = query_tokens & name_tokens
+            coverage = len(overlap) / max(len(name_tokens), 1)
+            numeric_match = bool(name_tokens & query_tokens & {t for t in name_tokens if t.isdigit()})
+            if coverage >= .6 or (numeric_match and len(overlap) >= 2):
+                ranked.append((coverage + (0.1 if numeric_match else 0), p))
+        ranked.sort(key=lambda row: row[0], reverse=True)
+        if ranked and (len(ranked) == 1 or ranked[0][0] > ranked[1][0]):
+            return ranked[0][1], False
+        return None, False
+
+    asked_for_details = any(term in q for term in ("details", "detail", "information", "tell me about", "specification", "specs", "property info"))
+    matched_project, exact_match = project_match(q)
+    if matched_project and (asked_for_details or exact_match):
+        p = matched_project
+        psf = p.asking_price / max(p.area_sqft, 1)
+        yield_pct = p.monthly_rent * 12 / max(p.asking_price, 1) * 100
+        current_psf, qoq, yoy = locality_appreciation(db, p.locality_id)
+        proximity = project_proximity(p)
+        amenities = json.loads(p.amenities_json or "[]")
+        legal = legal_evidence_status(p)
+        match_note = "" if exact_match else f"I couldn’t find that exact title; the closest synthetic match is **{p.name}**.\n\n"
+        trend = f"{qoq:+.1f}% QoQ · {yoy:+.1f}% YoY" if qoq is not None and yoy is not None else "Not enough generated history"
+        return (f"{match_note}### {p.name}\n"
+                f"- **Builder:** {p.builder.name}\n- **Location:** {p.locality.name}, {p.city}\n"
+                f"- **Type / configuration:** {p.property_type} · {p.configuration}\n- **Area:** {p.area_sqft:,} sq ft\n"
+                f"- **Synthetic asking price:** {money(p.asking_price, True)} ({money(psf)}/sq ft)\n"
+                f"- **Simulated transaction comparison:** {money(p.transaction_price, True)} (generated, not a verified sale)\n"
+                f"- **Demo rent / yield:** {money(p.monthly_rent)}/month · {yield_pct:.1f}%\n"
+                f"- **Stage / possession field:** {p.status} · {p.possession}\n- **Locality asking trend:** {trend}\n"
+                f"- **Project highlights:** {', '.join(project_usps(db, p))}\n- **Listed demo amenities:** {', '.join(amenities) if amenities else 'Not listed'}\n"
+                f"- **Illustrative distances:** Metro {proximity['metro']} km · IT park {proximity['it_park']} km · Hospital {proximity['hospital']} km · School {proximity['school']} km\n"
+                f"- **Legal / bank evidence:** EC, Khata, title, RERA, tax and technical clearances are not connected; bank approval is not verified.\n\n"
+                "Prices, rent, trend, amenities and distances are synthetic demo fields. Verify project availability, documents, approvals and all commercial details independently.")
     if user.role == "builder":
         if "high intent" in q or "buyer" in q or "lead" in q:
             rows = sorted(builder_leads(db, user.builder_id, city), key=lambda row: row["Intent score"], reverse=True)[:5]
@@ -1160,7 +1220,7 @@ def show_assistant(db, user: User, city: str, with_header: bool = True):
         db.commit()
         st.rerun()
     with st.expander("Try a prompt"):
-        st.write("Is this property dispute-free? · Show EC and Khata status · What is the bank approval status? · What is the YoY appreciation? · What are this project's USPs?")
+        st.write("Properties under ₹10k/sq ft? · Details for Devanahalli Residences 42 · Is this property dispute-free? · Show EC and Khata status · What is the YoY appreciation? · What are this project's USPs?")
 def show_activity(db, user: User):
     top_header("My activity", "A timeline of demo events attached to your buyer account.")
     rows = db.scalars(select(Event).where(Event.buyer_id == user.id).order_by(Event.event_at.desc()).limit(80)).all()
