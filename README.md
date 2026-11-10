@@ -60,10 +60,10 @@ DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@HOST:5432/propclue"
 - Consent-gated hover capture for buyer project/locality cards across Market pulse, Discover, Map, Market intelligence, and Compare & saved. Hover events appear in the buyer activity timeline and do not affect the buyer-intent score.
 - Buyer event timeline and timestamped purpose-specific consent history.
 - Buyer intent scoring with recency decay and a reason list. Scores use demo engagement events only.
-- Builder portfolio filtering, consent-aware lead views, CSV export, segment filters, and simulated campaigns. No message is sent.
+- Builder portfolio filtering, consent-aware lead views, CSV export, segment filters, and simulated campaigns.
 - Builder Portfolio MIS with a portfolio-project selector, daily/7/30/60/90-day simulated booking signals, engaged-lead and follow-up queues, inventory proxy, completion proxy, and current launch-stage records.
 - Builder Market Intelligence combines market trends, synthetic land/development map points, and transparent pricing scenario cues. Owner/title/approval records, parcel boundaries, and actual plot availability are not connected.
-- Buyer demand and soft campaigns share one builder workspace, with locality/project/activity segmentation and SMS/WhatsApp/voice-bot simulation choices. Twilio is not connected and no messages or calls are sent.
+- Buyer demand and campaigns share one builder workspace, with locality/project/activity segmentation and SMS/WhatsApp/voice-bot choices. Preview is simulation-only; optional live delivery sends one test message or call to a private configured destination, never to synthetic lead records.
 - Persistent left-sidebar token indicator reports zero LLM calls/tokens with the current deterministic assistant.
 - Buyer natural-language assistant embedded in project discovery, with synthetic QoQ/YoY and USP answers and explicit EC, Khata, title, dispute, tax, technical-clearance, and bank-document status; no paid LLM key is required.
 - Discover filters for synthetic distance estimates to metro, IT parks, hospitals, malls and schools; project cards include synthetic USPs and same-locality/type/configuration price comparisons.
@@ -133,6 +133,21 @@ erDiagram
 ## Deploy to Streamlit Community Cloud
 
 Community Cloud deploys from a GitHub repository. Create or select a private repository for this demo, push this folder, connect GitHub to Community Cloud, then choose `app.py` as the entry point. Add `DATABASE_URL` under the app's Secrets settings if you want persistent cloud writes. Keep `.streamlit/secrets.toml`, database credentials, and other secrets out of Git. Add `[auth]` and `[user_roles]` in Community Cloud secrets if the demo role switcher should be replaced by OIDC sign-in.
+
+### Optional Twilio test delivery
+
+The app never sends automatically. To enable the manual **Send one live test via Twilio** action, add these values under Community Cloud **Settings → Secrets** (or local `.streamlit/secrets.toml`):
+
+```toml
+TWILIO_ACCOUNT_SID = "AC…"
+TWILIO_AUTH_TOKEN = "…"
+TWILIO_FROM_NUMBER = "+1…" # SMS and voice sender
+TWILIO_WHATSAPP_FROM = "+1…" # WhatsApp-enabled Twilio sender
+CAMPAIGN_RECEIVER_PHONE = "+<E.164 test destination>"
+CAMPAIGN_SEND_PIN = "<private PIN>"
+```
+
+Do not add actual credentials, recipient numbers, or the PIN to GitHub or a public config file. The public demo accepts arbitrary demo logins, so live delivery requires the private PIN even when the Twilio keys are configured. Each manual action sends at most one message/call to the configured test destination, applies a five-minute per-session cooldown, and does not contact the synthetic lead audience. Twilio trial accounts may also require the recipient to be verified. SMS, WhatsApp, and voice require the corresponding enabled sender in Twilio.
 
 Use the app's **Share** settings to control whether it is public or private. The repository and app visibility are separate settings. A private Community Cloud app requires connected GitHub access and viewer permissions. See [Streamlit's deployment guide](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy), [GitHub connection instructions](https://docs.streamlit.io/deploy/streamlit-community-cloud/get-started/connect-your-github-account), and [secrets management](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management).
 

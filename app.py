@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import html
+import hmac
 import os
 import random
 import re
@@ -11,6 +13,7 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import plotly.express as px
 import pydeck as pdk
+import requests
 import streamlit as st
 from sqlalchemy import select, func
 
@@ -49,6 +52,69 @@ def money(value: float | int, compact: bool = False) -> str:
         if value >= 100_000:
             return f"₹{value / 100_000:.1f} L"
     return f"₹{value:,.0f}"
+
+
+def private_setting(name: str) -> str:
+    """Read a deployment secret without putting private recipient data in source control."""
+    try:
+        value = st.secrets.get(name)
+        if value is not None:
+            return str(value).strip()
+    except Exception:
+        pass
+    return os.environ.get(name, "").strip()
+
+
+def twilio_live_config(channel: str) -> tuple[str, str, str, str, str]:
+    account_sid = private_setting("TWILIO_ACCOUNT_SID")
+    auth_token = private_setting("TWILIO_AUTH_TOKEN")
+    recipient = private_setting("CAMPAIGN_RECEIVER_PHONE")
+    if channel.startswith("WhatsApp"):
+        sender = private_setting("TWILIO_WHATSAPP_FROM")
+    else:
+        sender = private_setting("TWILIO_FROM_NUMBER")
+    send_pin = private_setting("CAMPAIGN_SEND_PIN")
+    return account_sid, auth_token, sender, recipient, send_pin
+
+
+def normalize_e164(number: str) -> str:
+    cleaned = re.sub(r"[\s().-]", "", number)
+    if not re.fullmatch(r"\+[1-9]\d{7,14}", cleaned):
+        raise ValueError("The private campaign receiver setting must be an E.164 number, such as +14155552671.")
+    return cleaned
+
+
+def twilio_send_one(channel: str, message: str, config: tuple[str, str, str, str, str]) -> dict:
+    account_sid, auth_token, sender, recipient, _send_pin = config
+    if not all((account_sid, auth_token, sender, recipient)):
+        raise ValueError("Twilio credentials, sender, or private recipient are not configured.")
+    target = normalize_e164(recipient)
+    sender_value = sender.strip()
+    payload: dict[str, str]
+    resource = "Messages"
+    if channel.startswith("WhatsApp"):
+        target = f"whatsapp:{target}"
+        sender_number = normalize_e164(sender_value.removeprefix("whatsapp:"))
+        sender_value = f"whatsapp:{sender_number}"
+        payload = {"To": target, "From": sender_value, "Body": message}
+    elif channel.startswith("Voice"):
+        resource = "Calls"
+        safe_text = html.escape(message[:700])
+        twiml = f"<Response><Say>{safe_text}</Say><Hangup/></Response>"
+        payload = {"To": target, "From": sender_value, "Twiml": twiml, "TimeLimit": "45"}
+    else:
+        sender_value = normalize_e164(sender_value)
+        payload = {"To": target, "From": sender_value, "Body": message[:1500]}
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/{resource}.json"
+    response = requests.post(url, data=payload, auth=(account_sid, auth_token), timeout=(8, 25))
+    try:
+        response_data = response.json()
+    except ValueError:
+        response_data = {}
+    if not response.ok:
+        code = response_data.get("code")
+        raise RuntimeError(f"Twilio rejected the live request (HTTP {response.status_code}{f', code {code}' if code else ''}). Check channel setup and verified sender/recipient status.")
+    return {"sid": str(response_data.get("sid", "")), "status": str(response_data.get("status", "accepted"))}
 
 
 def add_event(db, buyer_id: int, event_type: str, project: Project | None = None,
@@ -1120,12 +1186,29 @@ def show_leads(db, user: User, city: str):
                     st.markdown(f"**{value}**")
                     st.caption(detail)
             st.metric("Consent-eligible audience", len(segment), help="Filtered to buyers with synthetic builder-marketing consent.", border=True)
-            channel = st.radio("Soft campaign channel", ["SMS · Twilio-ready", "WhatsApp · Twilio-ready", "Voice bot · Twilio-ready"], horizontal=True, key="campaign-channel")
+            channel = st.radio("Campaign channel", ["SMS · Twilio", "WhatsApp · Twilio", "Voice bot · Twilio"], horizontal=True, key="campaign-channel")
             campaign_name = st.text_input("Campaign name", value=f"{city} buyer update · demo", key="soft-campaign-name")
             message = st.text_area("Draft", value="Hello, we have a project update that may match your stated preferences. Would you like more details?", key="soft-campaign-message")
-            twilio_ready = all(os.environ.get(key) for key in ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"])
-            st.caption(f"{channel} · Twilio connection: {'credentials detected; sending remains disabled in this demo' if twilio_ready else 'not configured'}. No SMS, WhatsApp message, voice call or automated campaign is sent.")
-            st.info("Campaigns are soft simulations only. The app stores a campaign summary, not recipients or message delivery data. Twilio credentials are not read from this screen, and there is no live send action.")
+            twilio_config = twilio_live_config(channel)
+            account_sid, auth_token, sender, receiver, send_pin = twilio_config
+            channel_ready = bool(account_sid and auth_token and sender and receiver and send_pin)
+            if receiver:
+                try:
+                    masked_receiver = f"ending {normalize_e164(receiver)[-4:]}"
+                except ValueError:
+                    masked_receiver = "configured number is invalid"
+            else:
+                masked_receiver = "not configured"
+            sender_config_key = "TWILIO_WHATSAPP_FROM" if channel.startswith("WhatsApp") else "TWILIO_FROM_NUMBER"
+            missing_config = [name for name, value in [
+                ("TWILIO_ACCOUNT_SID", account_sid), ("TWILIO_AUTH_TOKEN", auth_token),
+                (sender_config_key, sender), ("CAMPAIGN_RECEIVER_PHONE", receiver), ("CAMPAIGN_SEND_PIN", send_pin),
+            ] if not value]
+            if missing_config:
+                st.caption(f"Live {channel.split(' ·')[0]} setup incomplete. Add private Streamlit secrets: {', '.join(missing_config)}.")
+            else:
+                st.caption(f"Live test destination: phone {masked_receiver}. All selected synthetic leads resolve to this single test destination.")
+            st.info("Campaign preview keeps the synthetic audience statistics. A live run sends at most **one** message or call to the configured test number; it never sends one copy per synthetic lead.")
             if st.button("Run campaign agent preview", type="primary", disabled=not segment, key="simulate-unified-campaign"):
                 clicks = int(round(len(segment) * random.Random(len(segment) + len(campaign_name) + len(channel)).uniform(.12, .38)))
                 campaign = Campaign(builder_id=user.builder_id, name=campaign_name.strip() or "Untitled demo campaign",
@@ -1135,6 +1218,28 @@ def show_leads(db, user: User, city: str):
                 db.add(AuditLog(actor_id=user.id, action="campaign_simulated", detail=campaign.name))
                 db.commit()
                 st.success(f"Campaign agent complete · audience checked: {len(records)} · consent eligible: {len(segment)} · channel: {channel.split(' ·')[0]} · illustrative responses: {clicks}. Nothing was sent.")
+            with st.expander("Live Twilio delivery · one test message or call"):
+                st.caption(f"This action contacts only the configured test destination ({masked_receiver}). It does not contact the synthetic buyer records.")
+                entered_pin = st.text_input("Private campaign send PIN", type="password", key="campaign-live-pin")
+                pin_ok = bool(send_pin and entered_pin and hmac.compare_digest(entered_pin, send_pin))
+                confirmed = st.checkbox(f"I confirm one live {channel.split(' ·')[0]} test to phone {masked_receiver} now.", key="campaign-live-confirm")
+                cooldown_until = st.session_state.get("campaign_live_cooldown_until")
+                still_in_cooldown = bool(cooldown_until and datetime.utcnow() < cooldown_until)
+                live_enabled = channel_ready and pin_ok and confirmed and bool(segment) and bool(message.strip()) and not still_in_cooldown
+                if not pin_ok and entered_pin:
+                    st.error("The campaign send PIN does not match.")
+                if still_in_cooldown:
+                    st.warning("A live test was just sent from this session. Wait five minutes before sending another.")
+                if st.button("Send one live test via Twilio", type="primary", disabled=not live_enabled, key="send-live-twilio-test"):
+                    try:
+                        twilio_result = twilio_send_one(channel, message.strip(), twilio_config)
+                        db.add(AuditLog(actor_id=user.id, action="campaign_live_test_sent",
+                                        detail=f"{campaign_name.strip() or 'Untitled demo campaign'} · {channel.split(' ·')[0]} · {twilio_result['status']}"))
+                        db.commit()
+                        st.session_state.campaign_live_cooldown_until = datetime.utcnow() + timedelta(minutes=5)
+                        st.success(f"Twilio accepted one live {channel.split(' ·')[0]} test to phone {masked_receiver}. Delivery status: {twilio_result['status']}.")
+                    except (ValueError, RuntimeError, requests.RequestException) as exc:
+                        st.error(str(exc) if isinstance(exc, (ValueError, RuntimeError)) else "Twilio could not be reached. Check the private account configuration and try again.")
             campaigns = db.scalars(select(Campaign).where(Campaign.builder_id == user.builder_id).order_by(Campaign.created_at.desc())).all()
             st.subheader("Previous soft campaign simulations")
             st.dataframe(pd.DataFrame([{"Campaign": c.name, "Segment / channel": c.segment, "Eligible": c.eligible_count,
