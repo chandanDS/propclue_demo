@@ -1179,8 +1179,10 @@ def show_segments(db, user: User, city: str):
 
 
 def assistant_answer(db, user: User, city: str, question: str) -> str:
-    q = question.lower()
+    q = question.lower().strip()
     locality_rows = db.scalars(select(Locality).where(Locality.city == city)).all()
+    all_projects = db.scalars(select(Project)).all()
+    projects_in_market = [p for p in all_projects if p.city == city]
     legal_terms = ("dispute", "title", "khata", "encumbrance", "bank", "approval letter", "legal", "tax", "rera", "document", "clearance")
     if any(term in q for term in legal_terms) or re.search(r"\bec\b", q):
         project = None
@@ -1189,37 +1191,42 @@ def assistant_answer(db, user: User, city: str, question: str) -> str:
         if candidate and candidate.city == city:
             project = candidate
         if not project:
-            projects = db.scalars(select(Project).where(Project.city == city)).all()
-            project = next((p for p in projects if p.name.lower() in q), None)
+            normalized_question = re.sub(r"[^a-z0-9]+", " ", q).strip()
+            project = next((p for p in all_projects if re.sub(r"[^a-z0-9]+", " ", p.name.lower()).strip() in normalized_question), None)
         if not project:
             return "I can’t verify legal or bank status from this demo. Choose a project in Discover or Map, then ask again. No EC, Khata, title, RERA, tax, dispute or bank-letter source is connected, so I can’t call any property dispute-free. Legal/title scores are not assessed."
         return (f"For **{project.name}**, the demo has no official document or approval integrations. Dispute-free status is **not verified**; EC, Khata, title chain, RERA/approvals, tax receipts and technical clearance are **not connected**. Legal/title score: **not assessed**. Bank approval: **not verified**, and no bank approval letter is attached. Please obtain and independently verify certified documents before making a decision.")
-    market_projects = db.scalars(select(Project).where(Project.city == city)).all()
     psf_query = re.search(r"(?:per\s*(?:sq\.?\s*ft|sft|sqft|square\s*(?:foot|feet))|psf)", q)
     limit_match = re.search(r"(?:under|below|less\s+than|up\s+to|upto|at\s+most|max(?:imum)?)\s*(?:₹|rs\.?\s*)?([\d,]+(?:\.\d+)?)\s*(k|thousand|lakh|lac|l|cr|crore)?", q)
-    if psf_query and limit_match:
+    explicit_total_budget = any(term in q for term in ("total price", "overall price", "budget", "property value", "lakh", "lac", "crore", " cr"))
+    implicit_psf_query = bool(limit_match and float(limit_match.group(1).replace(",", "")) < 100_000
+                             and limit_match.group(2) in {None, "k", "thousand"}
+                             and not explicit_total_budget)
+    if (psf_query or implicit_psf_query) and limit_match:
         amount = float(limit_match.group(1).replace(",", ""))
         unit = (limit_match.group(2) or "").lower()
         amount *= {"k": 1_000, "thousand": 1_000, "lakh": 100_000, "lac": 100_000,
                    "l": 100_000, "cr": 10_000_000, "crore": 10_000_000}.get(unit, 1)
-        matches = sorted([p for p in market_projects if p.asking_price / max(p.area_sqft, 1) <= amount],
+        matches = sorted([p for p in projects_in_market if p.asking_price / max(p.area_sqft, 1) <= amount],
                          key=lambda p: p.asking_price / max(p.area_sqft, 1))
         if not matches:
             return f"I couldn’t find a synthetic {city} project below ₹{amount:,.0f}/sq ft. Try a higher cap or another locality. Asking prices are generated demo values, not live listings."
         lines = [f"**{p.name}** · {p.locality.name} · {p.property_type}, {p.configuration} · ₹{p.asking_price / max(p.area_sqft, 1):,.0f}/sq ft · {money(p.asking_price, True)} total" for p in matches[:8]]
         more = f" Showing 8 of {len(matches)} matches." if len(matches) > 8 else ""
-        return f"Synthetic {city} project records at or below ₹{amount:,.0f}/sq ft:{more}\n\n" + "\n\n".join(lines) + "\n\nThese are generated comparison records, not verified or currently available properties."
+        return (f"I found **{len(matches)} synthetic {city} projects** at or below **₹{amount:,.0f}/sq ft**:{more}\n\n"
+                + "\n\n".join(lines)
+                + "\n\nThese are generated comparison records, not verified or currently available properties. Asking price per sq ft is calculated as total asking price ÷ listed area.")
 
     def project_match(text: str) -> tuple[Project | None, bool]:
         normalized_question = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
-        normalized_names = {p.id: re.sub(r"[^a-z0-9]+", " ", p.name.lower()).strip() for p in market_projects}
-        exact = [p for p in market_projects if normalized_names[p.id] and normalized_names[p.id] in normalized_question]
+        normalized_names = {p.id: re.sub(r"[^a-z0-9]+", " ", p.name.lower()).strip() for p in all_projects}
+        exact = [p for p in all_projects if normalized_names[p.id] and normalized_names[p.id] in normalized_question]
         if exact:
             return exact[0], True
         stop = {"give", "me", "show", "property", "properties", "project", "details", "detail", "for", "fro", "about", "tell", "info", "information", "please", "the", "a", "an", "of", "in", "at", "what", "is", "are", "can", "you", "to", "this", "that", "and", "with"}
         query_tokens = set(normalized_question.split()) - stop
         ranked = []
-        for p in market_projects:
+        for p in all_projects:
             name_tokens = set(normalized_names[p.id].split())
             overlap = query_tokens & name_tokens
             coverage = len(overlap) / max(len(name_tokens), 1)
@@ -1231,7 +1238,7 @@ def assistant_answer(db, user: User, city: str, question: str) -> str:
             return ranked[0][1], False
         return None, False
 
-    asked_for_details = any(term in q for term in ("details", "detail", "information", "tell me about", "specification", "specs", "property info"))
+    asked_for_details = any(term in q for term in ("details", "detail", "information", "tell me about", "specification", "specs", "property info", "project info", "full info", "more about"))
     matched_project, exact_match = project_match(q)
     if matched_project and (asked_for_details or exact_match):
         p = matched_project
