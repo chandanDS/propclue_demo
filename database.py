@@ -80,6 +80,34 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class SignupRequest(Base):
+    __tablename__ = "signup_requests"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    email: Mapped[str] = mapped_column(String(180), index=True)
+    requested_role: Mapped[str] = mapped_column(String(30), index=True)
+    city: Mapped[str] = mapped_column(String(40), default="Bengaluru")
+    organization: Mapped[str] = mapped_column(String(120), default="")
+    preferred_builder_id: Mapped[int | None] = mapped_column(ForeignKey("builders.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="Pending", index=True)
+    consent_to_contact: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+
+class ChannelPartnerProfile(Base):
+    __tablename__ = "channel_partner_profiles"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    company_name: Mapped[str] = mapped_column(String(120), default="Independent partner")
+    builder_id: Mapped[int | None] = mapped_column(ForeignKey("builders.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="Pending approval", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+
 class Project(Base):
     __tablename__ = "projects"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -197,6 +225,49 @@ class Lead(Base):
     intent_category: Mapped[str] = mapped_column(String(20), default="Low")
     last_activity: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     assigned_to: Mapped[str] = mapped_column(String(80), default="Demo sales team")
+
+
+class LeadActivity(Base):
+    """Auditable workflow updates for buyer-submitted enquiries and demo leads."""
+    __tablename__ = "lead_activities"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("leads.id"), index=True)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(60), index=True)
+    status_after: Mapped[str] = mapped_column(String(40), default="New")
+    note: Mapped[str] = mapped_column(Text, default="")
+    contact_channel: Mapped[str] = mapped_column(String(30), default="")
+    share_contact: Mapped[bool] = mapped_column(Boolean, default=False)
+    requested_documents_json: Mapped[str] = mapped_column(Text, default="[]")
+    due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    appointment_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ProjectInventory(Base):
+    """Unit-level inventory placeholder with explicit provenance and freshness."""
+    __tablename__ = "project_inventory"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    unit_label: Mapped[str] = mapped_column(String(40))
+    availability: Mapped[str] = mapped_column(String(20), default="Available")
+    asking_price: Mapped[int] = mapped_column(Integer)
+    source_name: Mapped[str] = mapped_column(String(100), default="Synthetic demo seed")
+    verification_status: Mapped[str] = mapped_column(String(40), default="Synthetic · unverified")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ProjectEvidence(Base):
+    """Document/approval evidence registry. Records stay unverified without a source."""
+    __tablename__ = "project_evidence"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    evidence_type: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(50), default="Not connected")
+    source_name: Mapped[str] = mapped_column(String(100), default="No connected provider")
+    source_reference: Mapped[str] = mapped_column(String(180), default="")
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    verification_status: Mapped[str] = mapped_column(String(40), default="Unverified")
 
 
 class Campaign(Base):
@@ -325,6 +396,7 @@ def init_db() -> None:
     with SessionLocal() as session:
         if session.scalar(select(func.count(User.id))) == 0:
             seed_demo(session)
+        seed_workflow_reference_data(session)
 
 
 def reset_demo_data(session: Any | None = None) -> None:
@@ -333,11 +405,37 @@ def reset_demo_data(session: Any | None = None) -> None:
         Base.metadata.drop_all(session.bind)
         Base.metadata.create_all(session.bind)
         seed_demo(session)
+        seed_workflow_reference_data(session)
         return
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     with SessionLocal() as new_session:
         seed_demo(new_session)
+        seed_workflow_reference_data(new_session)
+
+
+def seed_workflow_reference_data(session: Any) -> None:
+    """Add clearly synthetic starter inventory/evidence rows, including on existing DBs."""
+    projects = session.scalars(select(Project).order_by(Project.id)).all()
+    if projects and session.scalar(select(func.count(ProjectInventory.id))) == 0:
+        rows = []
+        for project in projects:
+            for number, status in enumerate(["Available", "Reserved", "Sold"], start=1):
+                rows.append(ProjectInventory(
+                    project_id=project.id, unit_label=f"Sample {number:02d}", availability=status,
+                    asking_price=project.asking_price, source_name="Synthetic demo seed",
+                    verification_status="Synthetic · unverified", updated_at=datetime.utcnow()))
+        session.add_all(rows)
+    if projects and session.scalar(select(func.count(ProjectEvidence.id))) == 0:
+        evidence_types = ["RERA registration", "Title chain / EC", "Khata / property record",
+                          "Property tax", "Technical / occupancy clearance", "Bank approval letter",
+                          "Project asking price"]
+        session.add_all([
+            ProjectEvidence(project_id=project.id, evidence_type=kind, status="Not connected",
+                            source_name="No connected provider", verification_status="Unverified")
+            for project in projects for kind in evidence_types
+        ])
+    session.commit()
 
 
 def seed_demo(session: Any) -> None:

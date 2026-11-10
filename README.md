@@ -19,7 +19,9 @@ Open <http://localhost:8501>. On first run, the app creates `data/propclue_demo.
 
 ### Demo personas
 
-The start screen lets you choose **Buyer** or **Builder** and enter any username and password. The username, chosen role, and market are stored in the demo `users` table; the password is never saved. This is demo-only access, not authentication. Admin is available only through configured OIDC role mapping or a seeded admin account.
+On localhost, the start screen has **Sign in** and **Create account** modes for Buyer, Builder, and Channel partner personas. Any password is accepted and not stored; this is only for synthetic local data. On non-local hosts, open persona access is disabled by default. Set `DEMO_LOGIN_ENABLED = "true"` only if you intentionally want open demo access; never use that setting with real buyer data.
+
+On hosted environments, **Create account** is a signup request form (no password collected). An admin reviews and approves the request, assigns any required builder scope, then the user signs in through OIDC using the exact email on the approved account. Channel partner approvals create an assigned partner workspace. The first hosted admin must be provisioned directly in the database by the deployment owner.
 
 For authenticated access, configure Streamlit's built-in OpenID Connect support in `.streamlit/secrets.toml` or Community Cloud app secrets, then map verified emails to roles:
 
@@ -31,13 +33,9 @@ client_id = "YOUR_OIDC_CLIENT_ID"
 client_secret = "YOUR_OIDC_CLIENT_SECRET"
 server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
 
-[user_roles]
-"buyer@example.com" = "buyer"
-"builder@example.com" = "builder"
-"admin@example.com" = "admin"
 ```
 
-Add the app URL to the OIDC provider's allowed redirect URLs. The demo role switcher is deliberately not an access-control boundary.
+Add the app URL to the OIDC provider's allowed redirect URLs. Each user must have a row with their verified email and approved role in `users`; builder rows must have the correct `builder_id`. Sign-in maps to that exact account and never falls back to a shared demo persona. A channel partner also needs an approved `channel_partner_profiles` row. The builder account's `builder_id` scopes its leads, projects, inventory, and campaigns.
 
 ### Persistence
 
@@ -50,7 +48,14 @@ DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@HOST:5432/propclue"
 
 ## What works in this demo
 
-- Buyer and builder demo login with role stored in the `users` table, plus optional OIDC role mapping. Buyer navigation is grouped into **Market overview** (pulse + intelligence) and **Explore properties** (discover + map + compare/save).
+- Local Buyer, Builder, and Channel partner demo profiles, plus verified OIDC sign-in for provisioned hosted accounts. Buyer navigation is grouped into **Market overview** (pulse + intelligence) and **Explore properties** (discover + map + compare/save + requests).
+- Buyer enquiry form creates a project-scoped builder lead with a request ID, buyer-visible status, preferred follow-up channel, optional per-enquiry contact-email sharing, document requests, site-visit preference, and a 24-hour response target. The builder sees the routed request, can assign an owner, set follow-up deadlines, record contact attempts, schedule or complete visits, and mark booked or closed-lost outcomes. Both sides see the activity timeline.
+- Builder lead outcome metrics separate buyer-submitted workflow requests from seeded sample leads. Response time, visits, bookings, and closed-lost counts use only workflow requests. Campaign delivery receipts remain explicitly unconnected.
+- Builder inventory workspace separates Available, Reserved, and Sold sample units. Every row shows source, update time, and verification status; buyers see the same unit-level demo register on the project profile.
+- Project evidence register shows source, source reference, check time, and verification status for RERA, title/EC, Khata, tax, technical/occupancy, bank approval, and price. All current rows are `Not connected` and `Unverified` until an authorized provider is integrated.
+- Local demo login is host-gated. Non-local access requires configured OIDC by default; OIDC users must be provisioned as scoped user rows and mapped by exact email. Use role-based builder rows and consent records before sharing real data.
+- First-time users can create a local demo account or submit a hosted access request for Buyer, Builder, or Channel partner. Admins review hosted requests, assign builder scope, and approve/reject them; passwords are not collected by this prototype.
+- Channel partner workspace supports consent-confirmed referrals into the assigned builder's project pipeline. Buyers can later sign in with the referred email to track the request. Partner referrals appear in the builder's lead queue with partner attribution and activity history.
 - Bengaluru, Delhi, and clearly separated NCR locality filters, with synthetic project inventory.
 - Interactive PyDeck map with project focus zoom, corrected hover details, synthetic metro/IT/business/hospital/school/mall/eatery points, and illustrative locality coverage shapes.
 - Project intelligence profiles, project saving, up-to-four project comparison, and CSV report downloads.
@@ -72,9 +77,10 @@ DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@HOST:5432/propclue"
 
 ## Current demo boundaries
 
-- The demo uses a compact relational model for the core walkthrough, not every table in the full product brief. It does not include PostGIS, Alembic migrations, a separate FastAPI backend, payment workflows, or production-grade authorization controls. The no-secret role switcher is for demo data only; configure OIDC and review role mapping before sharing beyond a trusted demo.
+- The demo uses a compact relational model for the core walkthrough, not every table in the full product brief. It does not include PostGIS, Alembic migrations, a separate FastAPI backend, payment workflows, or a production identity/consent governance service. The local persona switcher is for synthetic data only; configure OIDC, provision scoped users, and review consent/retention policy before using real buyer data.
 - Data events, enquiries, project values, localities, legal statuses, environmental signals, infrastructure points, and buyer identities are generated. Map coverage areas are illustrative shapes, not cadastral or locality boundaries.
-- Builder contact, email, SMS, and WhatsApp delivery are intentionally simulated only.
+- Buyer-to-builder enquiry and status workflows are persisted in the demo database, but no email, phone, or WhatsApp notification is sent. The builder sees contact email only after the buyer explicitly shares it; withdrawing `builder_contact` consent hides it in the pipeline.
+- Inventory state changes and evidence/source records are demo entries, not synchronized feeds. No official ownership, title, approval, bank, tax, RERA, price, or availability provider is connected, and the app cannot label a project legally verified.
 - Builder booking counts, locality-allocated inventory, completion percentages, and land opportunity markers are display proxies generated for the prototype; they are not operational MIS or acquisition leads. Pricing cues use synthetic locality asking/supply/enquiry signals and omit live macroeconomic inputs.
 - The assistant is deterministic and answers a small set of analytical question patterns from the database. It is not a general-purpose language model.
 - AI usage currently reports zero LLM tokens: intent scoring is local Python, queries use parameterized SQLAlchemy, and insights are deterministic. Flood exposure demo values are synthetic seed placeholders, not calculated from real flood observations; the locality composite uses `100 - flood placeholder` as its environmental component.
@@ -123,7 +129,12 @@ erDiagram
   PROJECTS ||--o{ SAVED_PROPERTIES : is_saved
   BUILDERS ||--o{ LEADS : receives_demo
   USERS ||--o{ LEADS : qualifies_demo
+  USERS ||--o| CHANNEL_PARTNER_PROFILES : has
+  USERS ||--o{ SIGNUP_REQUESTS : requests
   PROJECTS ||--o{ LEADS : relates_to
+  LEADS ||--o{ LEAD_ACTIVITIES : tracks
+  PROJECTS ||--o{ PROJECT_INVENTORY : lists_demo
+  PROJECTS ||--o{ PROJECT_EVIDENCE : records_source_status
   BUILDERS ||--o{ CAMPAIGNS : simulates
   USERS ||--o{ AI_CONVERSATIONS : starts
   AI_CONVERSATIONS ||--o{ AI_MESSAGES : stores
@@ -132,7 +143,7 @@ erDiagram
 
 ## Deploy to Streamlit Community Cloud
 
-Community Cloud deploys from a GitHub repository. Create or select a private repository for this demo, push this folder, connect GitHub to Community Cloud, then choose `app.py` as the entry point. Add `DATABASE_URL` under the app's Secrets settings if you want persistent cloud writes. Keep `.streamlit/secrets.toml`, database credentials, and other secrets out of Git. Add `[auth]` and `[user_roles]` in Community Cloud secrets if the demo role switcher should be replaced by OIDC sign-in.
+Community Cloud deploys from a GitHub repository. Create or select a private repository for this demo, push this folder, connect GitHub to Community Cloud, then choose `app.py` as the entry point. Add `DATABASE_URL` under the app's Secrets settings if you want persistent cloud writes. Keep `.streamlit/secrets.toml`, database credentials, and other secrets out of Git. Configure `[auth]`, provision the initial admin and their exact verified email in the database, and review hosted signup requests from the Admin workspace. Non-local hosts disable demo persona access by default; `DEMO_LOGIN_ENABLED = "true"` is an intentional open-demo override for synthetic data only.
 
 ### Optional Twilio test delivery
 
@@ -147,7 +158,7 @@ CAMPAIGN_RECEIVER_PHONE = "+<E.164 test destination>"
 CAMPAIGN_SEND_PIN = "<private PIN>"
 ```
 
-Do not add actual credentials, recipient numbers, or the PIN to GitHub or a public config file. The public demo accepts arbitrary demo logins, so live delivery requires the private PIN even when the Twilio keys are configured. Each manual action sends at most one message/call to the configured test destination, applies a five-minute per-session cooldown, and does not contact the synthetic lead audience. Twilio trial accounts may also require the recipient to be verified. SMS, WhatsApp, and voice require the corresponding enabled sender in Twilio.
+Do not add actual credentials, recipient numbers, or the PIN to GitHub or a public config file. Each manual action sends at most one message/call to the configured test destination, applies a five-minute per-session cooldown, and does not contact the synthetic lead audience. Twilio trial accounts may also require the recipient to be verified. SMS, WhatsApp, and voice require the corresponding enabled sender in Twilio. Delivery receipts are for that one test destination only and are not buyer campaign outcome data.
 
 Use the app's **Share** settings to control whether it is public or private. The repository and app visibility are separate settings. A private Community Cloud app requires connected GitHub access and viewer permissions. See [Streamlit's deployment guide](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy), [GitHub connection instructions](https://docs.streamlit.io/deploy/streamlit-community-cloud/get-started/connect-your-github-account), and [secrets management](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management).
 

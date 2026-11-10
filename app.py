@@ -26,7 +26,8 @@ except Exception:
 
 from database import (
     AIConversation, AIMessage, AuditLog, Builder, Campaign, ConsentRecord, DataSource,
-    Event, Lead, Locality, MarketObservation, Project, ProjectComparison, SavedProperty,
+    ChannelPartnerProfile, Event, Lead, LeadActivity, Locality, MarketObservation,
+    Project, ProjectComparison, ProjectEvidence, ProjectInventory, SavedProperty, SignupRequest,
     SessionLocal, User, init_db, reset_demo_data, score_from_events,
 )
 
@@ -363,7 +364,7 @@ def show_builder_portfolio(db, user: User, city: str):
         col.metric(f"{label} · simulated bookings", f"{total:,}", help="Generated illustrative booking signals, not records from a booking or CRM system.", border=True)
     lead_records = builder_leads(db, builder.id, city)
     active_leads = [r for r in lead_records if r["Project record"].id in selected_ids and (datetime.utcnow() - r["Lead"].last_activity).days <= 30]
-    followups = [r for r in lead_records if r["Project record"].id in selected_ids and (r["Lead"].status in {"New", "Contact pending"} or (datetime.utcnow() - r["Lead"].last_activity).days > 7)]
+    followups = [r for r in lead_records if r["Project record"].id in selected_ids and lead_followup_due(r)]
     total_inventory = 0
     for project in view_projects:
         latest_obs = db.scalar(select(MarketObservation).where(MarketObservation.locality_id == project.locality_id).order_by(MarketObservation.month.desc()).limit(1))
@@ -496,6 +497,58 @@ def oidc_configured() -> bool:
         return False
 
 
+def demo_login_enabled() -> bool:
+    """Allow passwordless persona login on localhost only unless explicitly opted in."""
+    configured = private_setting("DEMO_LOGIN_ENABLED").lower()
+    if configured in {"true", "1", "yes", "on"}:
+        return True
+    if configured in {"false", "0", "no", "off"}:
+        return False
+    try:
+        host = str(st.context.headers.get("host", "localhost")).split(":", 1)[0].lower()
+    except Exception:
+        host = ""
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def render_signup_request_form(db) -> None:
+    st.markdown("#### First time here? Request an account")
+    st.caption("Hosted signup requests are reviewed before access is granted. No password is collected on this form.")
+    with st.form("hosted-signup-request"):
+        name = st.text_input("Full name", max_chars=100)
+        email = st.text_input("Work or personal email", value=str(getattr(st.user, "email", "") or "").lower(), max_chars=180)
+        requested_role = st.selectbox("I am a", ["Buyer", "Builder", "Channel partner"])
+        city = st.selectbox("Market", ["Bengaluru", "Delhi"])
+        organization = st.text_input("Builder / channel partner company (if applicable)", max_chars=120)
+        builders = db.scalars(select(Builder).where(Builder.city == city).order_by(Builder.name)).all()
+        preferred_builder = None
+        if requested_role in {"Builder", "Channel partner"} and builders:
+            builder_labels = {f"{builder.name} · {builder.city}": builder for builder in builders}
+            preferred_builder = st.selectbox("Requested builder workspace", list(builder_labels))
+        accepted = st.checkbox("I agree that PropClue may use these details to review and respond to this access request.")
+        submit = st.form_submit_button("Submit signup request", type="primary")
+    if submit:
+        email = email.strip().lower()
+        if not name.strip() or "@" not in email or not accepted:
+            st.error("Enter your name and a valid email, and agree to the access-request use of these details.")
+            return
+        pending = db.scalar(select(SignupRequest).where(SignupRequest.email == email, SignupRequest.status == "Pending"))
+        if pending:
+            st.info(f"A signup request is already pending review (request #{pending.id}).")
+            return
+        db_builder_id = None
+        if preferred_builder:
+            db_builder_id = db.scalar(select(Builder.id).where(Builder.name == preferred_builder.split(" · ")[0], Builder.city == city))
+        request = SignupRequest(name=name.strip(), email=email, requested_role=requested_role.lower().replace(" ", "_"),
+            city=city, organization=organization.strip(), preferred_builder_id=db_builder_id,
+            consent_to_contact=True, created_at=datetime.utcnow())
+        db.add(request)
+        db.flush()
+        db.add(AuditLog(action="signup_request_submitted", detail=f"request={request.id}; role={request.requested_role}"))
+        db.commit()
+        st.success(f"Request #{request.id} submitted for review. You can sign in after an admin approves and provisions your account.")
+
+
 def login_screen(db):
     brand_lockup()
     st.markdown("<h1 style='font-family:Inter, sans-serif;font-weight:800;color:#0C213C;line-height:1.08'>Find your next property with more clarity.</h1>", unsafe_allow_html=True)
@@ -509,21 +562,37 @@ def login_screen(db):
         st.caption("Legal, tax, title, bank, price, distance, amenity and availability details are generated or unverified demo data. No property is confirmed dispute-free.")
     with right:
         with st.container(border=True):
-            st.subheader("Log in to the demo")
-            st.caption("Any password is accepted and is never stored. This screen is for demo personas, not real authentication.")
-            account_type = st.segmented_control("Account type", ["Buyer", "Builder"], default="Buyer", key="login_account_type")
+            st.subheader("Sign in")
+            if st.session_state.get("auth_error"):
+                st.error(st.session_state.pop("auth_error"))
+            if not demo_login_enabled():
+                st.info("Demo persona login is disabled on this host. Sign in with the configured identity provider.")
+                if oidc_configured():
+                    if st.button("Continue with secure sign-in", type="primary", width="stretch"):
+                        st.session_state.auth_mode = "oidc"
+                        st.login()
+                else:
+                    st.error("Identity provider is not configured. Add Streamlit [auth] settings and provision each user with a role and builder scope before opening access.")
+                render_signup_request_form(db)
+                return
+            st.caption("Local demo access only · passwords are not validated or stored. Do not use this mode for real buyer, builder, or partner accounts.")
+            mode = st.segmented_control("Account access", ["Sign in", "Create account"], default="Sign in", key="login-mode")
+            account_type = st.selectbox("Account type", ["Buyer", "Builder", "Channel partner"], key="login_account_type")
             city = st.selectbox("Market", ["Bengaluru", "Delhi"], key="login_market")
             builders = db.scalars(select(Builder).order_by(Builder.name)).all()
             builder_by_name = {f"{x.name} · {x.city}": x for x in builders}
             with st.form("demo_login_form", border=False):
-                username = st.text_input("Username or email", placeholder="Enter any demo username")
-                _password = st.text_input("Password", type="password", placeholder="Any value works in this demo")
+                username = st.text_input("Username or email", placeholder="Enter a demo email")
+                _password = st.text_input("Password", type="password", placeholder="Demo only; not validated")
                 selected_builder = None
-                if account_type == "Builder" and builder_by_name:
-                    selected_builder = st.selectbox("Builder company", list(builder_by_name))
+                if account_type in {"Builder", "Channel partner"} and builder_by_name:
+                    eligible_builders = {label: builder for label, builder in builder_by_name.items() if builder.city == city}
+                    selected_builder = st.selectbox("Builder company / requested partner affiliation", list(eligible_builders))
+                partner_company = st.text_input("Channel partner company", max_chars=120) if account_type == "Channel partner" else ""
                 record_interactions = st.checkbox("Record my demo interactions in this session", value=True,
                                                   help="Hover and explore actions are stored as synthetic demo activity.")
-                submit = st.form_submit_button("Continue as buyer" if account_type == "Buyer" else "Continue as builder",
+                action_label = "Create demo account" if mode == "Create account" else "Continue to demo"
+                submit = st.form_submit_button(action_label,
                                                type="primary", width="stretch")
             if submit:
                 raw_name = username.strip()
@@ -538,11 +607,16 @@ def login_screen(db):
                     email = f"{slug}@propclue.test"
                     display_name = raw_name[:100]
                 role = account_type.lower()
+                role = {"channel partner": "channel_partner"}.get(role, role)
                 user = db.scalar(select(User).where(User.email == email))
+                if mode == "Create account" and user:
+                    st.error("An account with this email already exists. Choose Sign in or use another email.")
+                    st.stop()
                 if user and user.role != role:
                     st.error("That username already has a different demo role. Use another username or sign in with its saved role.")
                     st.stop()
-                builder_id = builder_by_name[selected_builder].id if role == "builder" and selected_builder else None
+                selected_builder_row = builder_by_name.get(selected_builder) if selected_builder else None
+                builder_id = selected_builder_row.id if role == "builder" and selected_builder_row else None
                 if user:
                     user.name = display_name
                     user.city = city
@@ -554,6 +628,15 @@ def login_screen(db):
                     db.add(user)
                     db.flush()
                 db.add(ConsentRecord(user_id=user.id, purpose="analytics", granted=record_interactions))
+                if role == "channel_partner":
+                    profile = db.scalar(select(ChannelPartnerProfile).where(ChannelPartnerProfile.user_id == user.id))
+                    if not profile:
+                        profile = ChannelPartnerProfile(user_id=user.id)
+                        db.add(profile)
+                    profile.company_name = partner_company.strip() or display_name
+                    profile.builder_id = selected_builder_row.id if selected_builder_row else None
+                    profile.status = "Approved · local demo"
+                    profile.approved_at = datetime.utcnow()
                 db.add(AuditLog(actor_id=user.id, action="demo_login", detail=json.dumps({"role": role, "city": city})))
                 db.commit()
                 st.session_state.user_id = user.id
@@ -815,18 +898,35 @@ def show_project_profile(db, user: User, project: Project):
         trend_cols[2].metric("Locality YoY", f"{yoy:+.1f}%" if yoy is not None else "Unavailable", help="Year-over-year change in the synthetic locality-average asking series. No postal-code data is connected.", border=True)
         st.write(f"**Locality intelligence demo score:** {loc_score}/100 · **Rental yield demo:** {loc.rental_yield:.1f}% · **Flood exposure demo score:** {loc.flood_score}/100")
         show_locality_methodology(db, loc)
+        inventory_rows = db.scalars(select(ProjectInventory).where(ProjectInventory.project_id == project.id).order_by(ProjectInventory.unit_label)).all()
+        with st.container(border=True):
+            st.subheader("Unit availability")
+            if inventory_rows:
+                st.dataframe(pd.DataFrame([{"Unit / sample": row.unit_label, "Availability": row.availability,
+                    "Indicative ask": money(row.asking_price, True), "Source": row.source_name,
+                    "Updated": row.updated_at.strftime("%d %b %Y %H:%M UTC"), "Verification": row.verification_status}
+                    for row in inventory_rows]), width="stretch", hide_index=True, alt=f"Unit availability and source status for {project.name}")
+                st.caption("These are synthetic sample units. They do not establish current builder-held stock or a live reservation.")
+            else:
+                st.info("No unit inventory feed is connected for this project.")
         with st.container(border=True):
             st.subheader("Legal, technical and bank checks")
-            st.info("Not verified · no official documents or provider records are connected. This demo cannot confirm that a property is dispute-free.")
+            evidence_rows = db.scalars(select(ProjectEvidence).where(ProjectEvidence.project_id == project.id).order_by(ProjectEvidence.evidence_type)).all()
+            st.info("No official documents or provider records are connected. This demo cannot confirm that a property is dispute-free.")
             legal_cols = st.columns(3)
             legal_cols[0].metric("Legal / title score", "Not assessed", help="No underlying verified documents are available to calculate a legal score.", border=True)
             legal_cols[1].metric("Verified documents", "0 / 7", help="No originals or official records are linked to this synthetic project.", border=True)
             legal_cols[2].metric("Bank approval", "Not verified", help="No bank approval records or approval letter are attached.", border=True)
-            st.dataframe(pd.DataFrame([{"Check": key, "Demo status": value} for key, value in legal_evidence_status(project).items() if key != "Project"]),
+            evidence_frame = pd.DataFrame([{"Check": row.evidence_type, "Status": row.status, "Source": row.source_name,
+                "Reference": row.source_reference or "—", "Last checked": row.checked_at.strftime("%d %b %Y %H:%M UTC") if row.checked_at else "Never",
+                "Verification": row.verification_status} for row in evidence_rows])
+            if evidence_frame.empty:
+                evidence_frame = pd.DataFrame([{"Check": key, "Status": value, "Source": "No connected provider", "Reference": "—", "Last checked": "Never", "Verification": "Unverified"} for key, value in legal_evidence_status(project).items() if key != "Project"])
+            st.dataframe(evidence_frame,
                          width="stretch", hide_index=True, alt=f"Unverified legal, tax, technical, and bank document checklist for {project.name}")
-            st.caption("This is a missing-source checklist, not a negative legal finding. Do not use it to make a purchase or lending decision.")
+            st.caption("This source register supports provenance and freshness. ‘Not connected’ is not a negative legal finding. Do not use these demo records to make a purchase or lending decision.")
         st.caption(f"Data provenance: Synthetic demo data · generated {date.today().isoformat()} · unverified · confidence: illustrative only")
-        b1, b2, b3 = st.columns(3)
+        b1, b2 = st.columns(2)
         if b1.button("Save project", key=f"save-{project.id}"):
             exists = db.scalar(select(SavedProperty).where(SavedProperty.user_id == user.id, SavedProperty.project_id == project.id))
             if not exists:
@@ -839,9 +939,48 @@ def show_project_profile(db, user: User, project: Project):
                                 "simulated_transaction_inr": project.transaction_price, "area_sqft": project.area_sqft,
                                 "monthly_rent_inr": project.monthly_rent, "legal_status": project.legal_status}])
         b2.download_button("Download demo report CSV", report.to_csv(index=False), file_name=f"propclue-project-{project.id}-demo.csv", mime="text/csv", on_click=lambda: add_event(db, user.id, "Report downloaded", project))
-        if b3.button("Record enquiry (demo)", key=f"enquiry-{project.id}"):
-            add_event(db, user.id, "Enquiry submitted", project)
-            st.success("Demo enquiry recorded locally. No builder was contacted.")
+        st.markdown("#### Contact the builder / request a visit")
+        st.caption("Submitting creates a buyer-visible request and routes a lead to this project’s builder. Demo requests are stored in this app only; no email, phone, or WhatsApp is sent.")
+        with st.form(f"buyer-enquiry-{project.id}", clear_on_submit=True):
+            contact_channel = st.selectbox("Preferred follow-up", ["Email", "In-app only"], key=f"buyer-channel-{project.id}")
+            share_contact = st.checkbox("Allow this builder to see my account email for this enquiry", value=False, key=f"share-contact-{project.id}")
+            visit_requested = st.checkbox("Request a site visit", key=f"visit-request-{project.id}")
+            visit_date = st.date_input("Preferred visit date", value=date.today() + timedelta(days=3), key=f"visit-date-{project.id}")
+            visit_time = st.time_input("Preferred visit time", value=datetime.strptime("11:00", "%H:%M").time(), key=f"visit-time-{project.id}")
+            requested_documents = st.multiselect("Request documents", ["RERA registration", "Title chain / EC", "Khata / property record", "Property tax", "Technical / occupancy clearance", "Bank approval letter"], key=f"documents-{project.id}")
+            buyer_note = st.text_area("Note for the builder", max_chars=500, key=f"buyer-note-{project.id}")
+            submit_enquiry = st.form_submit_button("Send enquiry to builder", type="primary")
+        if submit_enquiry:
+            if contact_channel == "Email" and not share_contact:
+                st.error("To receive follow-up by email, explicitly allow the builder to see your account email, or choose In-app only.")
+                return
+            now = datetime.utcnow()
+            lead = Lead(builder_id=project.builder_id, buyer_id=user.id, project_id=project.id,
+                        status="New", intent_score=0, intent_category="Low", last_activity=now,
+                        assigned_to="Unassigned")
+            db.add(lead)
+            db.flush()
+            requested_visit = datetime.combine(visit_date, visit_time) if visit_requested else None
+            db.add(LeadActivity(lead_id=lead.id, actor_id=user.id, action="Buyer enquiry submitted",
+                                status_after="New", note=buyer_note.strip(), contact_channel=contact_channel,
+                                share_contact=share_contact, requested_documents_json=json.dumps(requested_documents),
+                                due_at=now + timedelta(hours=24), appointment_at=requested_visit, created_at=now))
+            if share_contact:
+                db.add(ConsentRecord(user_id=user.id, purpose="builder_contact", granted=True,
+                                     recorded_at=now, source="Project enquiry form"))
+            db.add(AuditLog(actor_id=user.id, action="buyer_enquiry_submitted",
+                            detail=json.dumps({"lead_id": lead.id, "project_id": project.id, "contact_shared": share_contact})))
+            add_event(db, user.id, "Enquiry submitted", project, context={"lead_id": lead.id})
+            st.success(f"Your request was sent to {project.builder.name}. Request ID: PC-{lead.id:06d}. Check My requests for progress.")
+        with st.expander("My requests for this project"):
+            buyer_leads = db.scalars(select(Lead).where(Lead.buyer_id == user.id, Lead.project_id == project.id).order_by(Lead.last_activity.desc())).all()
+            if not buyer_leads:
+                st.info("You have not contacted this builder about this project yet.")
+            for buyer_lead in buyer_leads:
+                st.write(f"**PC-{buyer_lead.id:06d} · {buyer_lead.status}** · assigned to {buyer_lead.assigned_to} · updated {buyer_lead.last_activity.strftime('%d %b %Y %H:%M UTC')}")
+                activities = db.scalars(select(LeadActivity).where(LeadActivity.lead_id == buyer_lead.id).order_by(LeadActivity.created_at)).all()
+                for activity in activities:
+                    st.caption(f"{activity.created_at.strftime('%d %b %Y %H:%M UTC')} · {activity.action} · {activity.status_after}" + (f" · visit {activity.appointment_at.strftime('%d %b %Y %H:%M')}" if activity.appointment_at else ""))
         obs = db.scalars(select(MarketObservation).where(MarketObservation.locality_id == loc.id).order_by(MarketObservation.month)).all()
         series = pd.DataFrame([{"Month": x.month, "Asking price": x.asking_psf, "Simulated transaction": x.transaction_psf} for x in obs])
         fig = px.line(series, x="Month", y=["Asking price", "Simulated transaction"], title="36-month locality series · ₹ per sq ft")
@@ -1106,10 +1245,13 @@ def builder_leads(db, builder_id: int, city: str | None = None):
     stmt = select(Lead, User, Project).join(User, Lead.buyer_id == User.id).join(Project, Lead.project_id == Project.id).where(Lead.builder_id == builder_id)
     rows = db.execute(stmt).all()
     consent_map = latest_consents(db, [buyer.id for _, buyer, _ in rows])
+    contact_consent_map = latest_consents(db, [buyer.id for _, buyer, _ in rows])
     records = []
     for lead, buyer, project in rows:
         if city and buyer.city != city:
             continue
+        activities = db.scalars(select(LeadActivity).where(LeadActivity.lead_id == lead.id).order_by(LeadActivity.created_at)).all()
+        initial = next((item for item in activities if item.action in {"Buyer enquiry submitted", "Partner referral submitted"}), None)
         records.append({"Lead": lead, "Buyer": buyer, "Project record": project,
                         "Buyer name": buyer.name, "City": buyer.city, "Locality": buyer.locality,
                         "Budget": f"{money(buyer.budget_min, True)}–{money(buyer.budget_max, True)}",
@@ -1117,15 +1259,186 @@ def builder_leads(db, builder_id: int, city: str | None = None):
                         "Project": project.name, "Intent score": lead.intent_score,
                         "Intent": lead.intent_category, "Last activity": lead.last_activity.strftime("%d %b %Y"),
                         "Marketing eligible": consent_map.get((buyer.id, "builder_marketing"), False), "Status": lead.status,
-                        "Next action": "Offer a site visit" if lead.intent_category == "High" else "Share project details"})
+                        "Next action": "Confirm visit" if lead.status == "Site visit requested" else ("Offer a site visit" if lead.intent_category == "High" else "Share project details"),
+                        "Source": ("Channel partner referral" if initial and initial.action == "Partner referral submitted" else "Buyer-submitted demo request") if initial else "Seed sample lead",
+                        "Contact preference": initial.contact_channel if initial else "—",
+                        "Contact email": buyer.email if initial and initial.share_contact and contact_consent_map.get((buyer.id, "builder_contact"), False) else "Not shared / withdrawn",
+                        "Requested documents": ", ".join(json.loads(initial.requested_documents_json or "[]")) if initial else "—",
+                        "Activities": activities})
     return records
+
+
+def workflow_is_operational(record: dict) -> bool:
+    return record["Source"] != "Seed sample lead"
+
+
+def lead_followup_due(record: dict, now: datetime | None = None) -> bool:
+    now = now or datetime.utcnow()
+    lead = record["Lead"]
+    if lead.status in {"Booked", "Closed - lost", "Closed - cancelled", "Site visit completed"}:
+        return False
+    deadlines = [activity.due_at for activity in record["Activities"] if activity.due_at]
+    if workflow_is_operational(record):
+        return bool(deadlines and max(deadlines) <= now)
+    return lead.status in {"New", "Contact pending"} or (now - lead.last_activity).days > 7
+
+
+def show_builder_inventory(db, user: User, city: str) -> None:
+    projects = db.scalars(select(Project).where(Project.builder_id == user.builder_id, Project.city == city).order_by(Project.name)).all()
+    st.subheader("Project inventory")
+    st.caption("Unit states can be updated in this demo, but every sample row remains marked synthetic and unverified. A real inventory integration should replace these placeholders.")
+    if not projects:
+        st.info("No projects are assigned to this builder in the selected market.")
+        return
+    project_names = {f"{project.name} · {project.locality.name}": project for project in projects}
+    selected_label = st.selectbox("Project inventory", list(project_names), key="workflow-inventory-project")
+    project = project_names[selected_label]
+    units = db.scalars(select(ProjectInventory).where(ProjectInventory.project_id == project.id).order_by(ProjectInventory.unit_label)).all()
+    if units:
+        counts = {state: sum(row.availability == state for row in units) for state in ["Available", "Reserved", "Sold"]}
+        inventory_metrics = st.columns(3)
+        for column, state in zip(inventory_metrics, ["Available", "Reserved", "Sold"]):
+            column.metric(state, counts[state], border=True)
+        st.dataframe(pd.DataFrame([{"Unit / sample": row.unit_label, "State": row.availability,
+            "Indicative ask": money(row.asking_price, True), "Source": row.source_name,
+            "Updated": row.updated_at.strftime("%d %b %Y %H:%M UTC"), "Verification": row.verification_status}
+            for row in units]), width="stretch", hide_index=True, alt=f"Sample inventory units for {project.name}")
+        with st.form("builder-inventory-update"):
+            unit_labels = {row.unit_label: row for row in units}
+            selected_unit = st.selectbox("Sample unit", list(unit_labels))
+            new_state = st.selectbox("Availability", ["Available", "Reserved", "Sold"])
+            if st.form_submit_button("Save demo inventory update"):
+                row = unit_labels[selected_unit]
+                row.availability = new_state
+                row.source_name = "Builder demo workflow"
+                row.verification_status = "Demo entry · not externally verified"
+                row.updated_at = datetime.utcnow()
+                db.add(AuditLog(actor_id=user.id, action="demo_inventory_updated",
+                    detail=f"project={project.id}; unit={row.unit_label}; state={new_state}"))
+                db.commit()
+                st.success("Demo inventory state updated and timestamped.")
+    else:
+        st.info("No sample units exist for this project.")
+
+
+def show_channel_partner(db, user: User) -> None:
+    profile = db.scalar(select(ChannelPartnerProfile).where(ChannelPartnerProfile.user_id == user.id))
+    top_header("Channel partner workspace", "Submit consent-based buyer referrals to your approved builder portfolio.")
+    if not profile or not profile.builder_id or profile.status not in {"Approved", "Approved · local demo"}:
+        st.info("Your partner account is awaiting builder affiliation approval. Referrals are locked until an admin approves the account and assigns a builder.")
+        return
+    builder = db.get(Builder, profile.builder_id)
+    st.caption(f"{profile.company_name} · assigned builder: {builder.name if builder else '—'}")
+    projects = db.scalars(select(Project).where(Project.builder_id == profile.builder_id).order_by(Project.name)).all()
+    if not projects:
+        st.info("No projects are available under the assigned builder.")
+        return
+    project_options = {f"{project.name} · {project.locality.name}": project for project in projects}
+    st.subheader("Create a buyer referral")
+    st.caption("Only submit a person who has explicitly asked you to share their details with this builder. This demo stores the referral; it sends no notification.")
+    with st.form("partner-referral-form"):
+        project_label = st.selectbox("Project", list(project_options))
+        buyer_name = st.text_input("Buyer name", max_chars=100)
+        buyer_email = st.text_input("Buyer email", max_chars=180)
+        requested_visit = st.checkbox("Buyer requested a site visit")
+        visit_date = st.date_input("Preferred visit date", value=date.today() + timedelta(days=3))
+        visit_time = st.time_input("Preferred visit time", value=datetime.strptime("11:00", "%H:%M").time())
+        referral_note = st.text_area("Referral context", max_chars=500)
+        buyer_consent = st.checkbox("The buyer has consented to share these details with the selected builder for follow-up.")
+        submit_referral = st.form_submit_button("Submit referral to builder", type="primary")
+    if submit_referral:
+        email = buyer_email.strip().lower()
+        if not buyer_name.strip() or "@" not in email or not buyer_consent:
+            st.error("Enter the buyer's name and a valid email, and confirm their consent before submitting.")
+            return
+        project = project_options[project_label]
+        buyer = db.scalar(select(User).where(User.email == email))
+        if buyer and buyer.role != "buyer":
+            st.error("That email is already associated with another role. Ask the buyer to use their buyer account email.")
+            return
+        if not buyer:
+            buyer = User(role="buyer", name=buyer_name.strip(), email=email, city=project.city,
+                         locality=project.locality.name)
+            db.add(buyer)
+            db.flush()
+        now = datetime.utcnow()
+        lead = Lead(builder_id=project.builder_id, buyer_id=buyer.id, project_id=project.id,
+                    status="New", intent_score=0, intent_category="Low", last_activity=now,
+                    assigned_to="Unassigned")
+        db.add(lead)
+        db.flush()
+        db.add(LeadActivity(lead_id=lead.id, actor_id=user.id, action="Partner referral submitted",
+            status_after="New", note=referral_note.strip(), contact_channel="Email", share_contact=True,
+            due_at=now + timedelta(hours=24),
+            appointment_at=datetime.combine(visit_date, visit_time) if requested_visit else None,
+            created_at=now))
+        db.add(ConsentRecord(user_id=buyer.id, purpose="builder_contact", granted=True,
+            recorded_at=now, source="Channel partner referral consent"))
+        db.add(AuditLog(actor_id=user.id, action="partner_referral_submitted",
+            detail=f"lead={lead.id}; project={project.id}; partner={user.id}"))
+        db.commit()
+        st.success(f"Referral routed to {builder.name}. Request ID: PC-{lead.id:06d}.")
+    st.subheader("My referrals")
+    activity_rows = db.scalars(select(LeadActivity).where(LeadActivity.actor_id == user.id,
+        LeadActivity.action == "Partner referral submitted").order_by(LeadActivity.created_at.desc())).all()
+    referral_rows = []
+    for activity in activity_rows:
+        lead = db.get(Lead, activity.lead_id)
+        if lead and lead.builder_id == profile.builder_id:
+            buyer = db.get(User, lead.buyer_id)
+            project = db.get(Project, lead.project_id)
+            referral_rows.append({"Request": f"PC-{lead.id:06d}", "Buyer": buyer.name if buyer else "—",
+                "Project": project.name if project else "—", "Status": lead.status,
+                "Submitted": activity.created_at.strftime("%d %b %Y %H:%M UTC"),
+                "Updated": lead.last_activity.strftime("%d %b %Y %H:%M UTC")})
+    if referral_rows:
+        st.dataframe(pd.DataFrame(referral_rows), width="stretch", hide_index=True, alt="Channel partner buyer referrals and builder follow-up status")
+    else:
+        st.info("No referrals submitted yet.")
+
+
+def render_lead_timeline(record: dict) -> None:
+    activities = record["Activities"]
+    if not activities:
+        st.caption("No workflow history yet · seed sample lead")
+        return
+    for activity in activities:
+        details = f"{activity.created_at.strftime('%d %b %Y %H:%M UTC')} · {activity.action} · {activity.status_after}"
+        if activity.note:
+            details += f" · {activity.note}"
+        if activity.appointment_at:
+            details += f" · visit {activity.appointment_at.strftime('%d %b %Y %H:%M')}"
+        if activity.due_at:
+            details += f" · response due {activity.due_at.strftime('%d %b %H:%M UTC')}"
+        st.caption(details)
 
 
 def show_leads(db, user: User, city: str):
     builder = db.get(Builder, user.builder_id)
     top_header("Buyer demand & campaigns", f"{builder.name if builder else 'Your portfolio'} · follow-up, segmentation and soft campaign workspace.")
     records = builder_leads(db, user.builder_id, city)
-    tab_leads, tab_campaigns = st.tabs(["Lead pipeline", "Segments & soft campaigns"])
+    workflow_records = [r for r in records if workflow_is_operational(r)]
+    response_hours = []
+    for record in workflow_records:
+        start = next((a for a in record["Activities"] if a.action in {"Buyer enquiry submitted", "Partner referral submitted"}), None)
+        response = next((a for a in record["Activities"] if a.action in {"Contact attempted", "Contacted"}), None)
+        if start and response:
+            response_hours.append(max(0, (response.created_at - start.created_at).total_seconds() / 3600))
+    metric_cols = st.columns(5)
+    metric_cols[0].metric("Workflow leads", len(workflow_records), help="Buyer enquiries and channel-partner referrals; excludes seeded sample leads.", border=True)
+    metric_cols[1].metric("Avg. first response", f"{sum(response_hours)/len(response_hours):.1f} h" if response_hours else "No responses yet", help="Calculated only from buyer-submitted demo requests with a recorded first contact.", border=True)
+    metric_cols[2].metric("Visits scheduled / done", sum(r["Status"] in {"Site visit scheduled", "Site visit completed"} for r in workflow_records), border=True)
+    metric_cols[3].metric("Bookings", sum(r["Status"] == "Booked" for r in workflow_records), border=True)
+    metric_cols[4].metric("Closed / cancelled", sum(r["Status"] in {"Closed - lost", "Closed - cancelled"} for r in workflow_records), border=True)
+    st.caption("Campaign delivery receipts are not connected. A live Twilio test is a single-destination test, not a per-buyer campaign delivery.")
+    contacted = [r for r in workflow_records if any(a.action in {"Contact attempted", "Contacted"} for a in r["Activities"])]
+    visited = [r for r in workflow_records if any(a.action in {"Site visit scheduled", "Site visit completed"} for a in r["Activities"])]
+    contacted_visits = [r for r in contacted if any(a.action in {"Site visit scheduled", "Site visit completed"} for a in r["Activities"])]
+    visited_bookings = [r for r in visited if r["Status"] == "Booked"]
+    conversion_cols = st.columns(2)
+    conversion_cols[0].metric("Recorded contact → visit", f"{len(contacted_visits) / len(contacted) * 100:.1f}%" if contacted else "No contact records", help=f"{len(contacted_visits)} of {len(contacted)} contacted workflow leads have a scheduled/completed visit record.", border=True)
+    conversion_cols[1].metric("Recorded visit → booking", f"{len(visited_bookings) / len(visited) * 100:.1f}%" if visited else "No visit records", help=f"{len(visited_bookings)} of {len(visited)} leads with a visit record are marked booked.", border=True)
+    tab_leads, tab_inventory, tab_campaigns = st.tabs(["Lead pipeline", "Project inventory", "Segments & soft campaigns"])
     with tab_leads:
         if not records:
             st.info("No leads match this builder portfolio in the selected market.")
@@ -1139,16 +1452,55 @@ def show_leads(db, user: User, city: str):
             now = datetime.utcnow()
             filtered = [r for r in records if (selected_loc == "All" or r["Locality"] == selected_loc)
                         and (selected_status == "All" or r["Status"] == selected_status)
-                        and (followup_view != "Follow-up due" or r["Status"] in {"New", "Contact pending"} or (now-r["Lead"].last_activity).days > 7)
+                        and (followup_view != "Follow-up due" or lead_followup_due(r, now))
                         and (followup_view != "Active in last 7 days" or (now-r["Lead"].last_activity).days <= 7)
                         and (followup_view != "Site visit / negotiation" or r["Status"] in {"Site visit scheduled", "Negotiation"})]
             opted = sum(r["Marketing eligible"] for r in filtered)
             c1, c2, c3 = st.columns(3)
             c1.metric("Leads in view", len(filtered), border=True)
-            c2.metric("Follow-up due", sum(r["Status"] in {"New", "Contact pending"} or (now-r["Lead"].last_activity).days > 7 for r in filtered), border=True)
+            c2.metric("Follow-up due", sum(lead_followup_due(r, now) for r in filtered), border=True)
             c3.metric("Marketing consent present", opted, help="Only synthetic consent-eligible records can enter a campaign simulation.", border=True)
-            display = pd.DataFrame([{k: r[k] for k in ["Buyer name", "City", "Locality", "Budget", "Configuration", "Timeline", "Project", "Last activity", "Marketing eligible", "Status", "Next action"]} for r in filtered])
+            display = pd.DataFrame([{k: r[k] for k in ["Buyer name", "City", "Locality", "Budget", "Configuration", "Timeline", "Project", "Source", "Contact preference", "Contact email", "Requested documents", "Last activity", "Marketing eligible", "Status", "Next action"]} for r in filtered])
             st.dataframe(display, width="stretch", hide_index=True, height=420, alt="Builder authorized synthetic buyer leads, activity status, consent and suggested next action")
+            st.markdown("#### Work a lead")
+            lead_options = {f"PC-{r['Lead'].id:06d} · {r['Buyer name']} · {r['Project']} · {r['Status']} · {r['Source']}": r for r in filtered}
+            if lead_options:
+                lead_label = st.selectbox("Select lead", list(lead_options), key="work-lead-choice")
+                selected_record = lead_options[lead_label]
+                selected_lead = selected_record["Lead"]
+                with st.expander("Contact visibility and history", expanded=True):
+                    st.write(f"**Contact:** {selected_record['Contact email']} · **Preferred channel:** {selected_record['Contact preference']}")
+                    st.write(f"**Requested documents:** {selected_record['Requested documents']}")
+                    render_lead_timeline(selected_record)
+                with st.form(f"lead-update-{selected_lead.id}"):
+                    statuses = ["New", "Contact pending", "Contact attempted", "Contacted", "Interested", "Qualified", "Site visit requested", "Site visit scheduled", "Site visit completed", "Negotiation", "Booked", "Closed - lost", "Closed - cancelled"]
+                    current_status = selected_lead.status if selected_lead.status in statuses else "New"
+                    new_status = st.selectbox("Pipeline status", statuses, index=statuses.index(current_status))
+                    owner = st.text_input("Assigned owner", value=selected_lead.assigned_to or "Unassigned")
+                    actions = ["Contact attempted", "Contacted", "Qualified", "Site visit scheduled", "Site visit completed", "Negotiation", "Booking confirmed", "Closed - lost", "Closed - cancelled", "Document request handled", "Follow-up scheduled"]
+                    action = st.selectbox("Activity to record", actions)
+                    due_enabled = st.checkbox("Set response / follow-up deadline", value=False)
+                    due_date = st.date_input("Follow-up date", value=date.today() + timedelta(days=1))
+                    due_time = st.time_input("Follow-up time", value=datetime.strptime("17:00", "%H:%M").time())
+                    appointment_enabled = st.checkbox("Record / update site visit time", value=False)
+                    appointment_date = st.date_input("Site visit date", value=date.today() + timedelta(days=3))
+                    appointment_time = st.time_input("Site visit time", value=datetime.strptime("11:00", "%H:%M").time())
+                    update_note = st.text_area("Outcome / next step note", max_chars=500)
+                    save_update = st.form_submit_button("Save lead update", type="primary")
+                if save_update:
+                    now = datetime.utcnow()
+                    selected_lead.status = new_status
+                    selected_lead.assigned_to = owner.strip() or "Unassigned"
+                    selected_lead.last_activity = now
+                    db.add(LeadActivity(lead_id=selected_lead.id, actor_id=user.id, action=action,
+                        status_after=new_status, note=update_note.strip(),
+                        due_at=datetime.combine(due_date, due_time) if due_enabled else None,
+                        appointment_at=datetime.combine(appointment_date, appointment_time) if appointment_enabled else None,
+                        created_at=now))
+                    db.add(AuditLog(actor_id=user.id, action="lead_workflow_updated",
+                        detail=f"lead={selected_lead.id}; status={new_status}; action={action}"))
+                    db.commit()
+                    st.success("Lead status, owner, follow-up, and activity history updated.")
             with st.expander("Export consent-eligible leads"):
                 eligible = [r for r in filtered if r["Marketing eligible"]]
                 if eligible:
@@ -1156,6 +1508,8 @@ def show_leads(db, user: User, city: str):
                     st.download_button("Download eligible demo leads CSV", export.to_csv(index=False), "propclue-eligible-demo-leads.csv", "text/csv")
                 else:
                     st.info("No buyers in this view have builder-marketing consent.")
+    with tab_inventory:
+        show_builder_inventory(db, user, city)
     with tab_campaigns:
         if not records:
             st.info("No portfolio leads are available for segmentation.")
@@ -1469,11 +1823,40 @@ def show_saved(db, user: User, show_header: bool = True):
             st.success("Comparison saved to your demo account.")
 
 
+def show_buyer_requests(db, user: User) -> None:
+    st.subheader("My requests and visits")
+    leads = db.scalars(select(Lead).where(Lead.buyer_id == user.id).order_by(Lead.last_activity.desc())).all()
+    leads = [lead for lead in leads if db.scalar(select(func.count(LeadActivity.id)).where(
+        LeadActivity.lead_id == lead.id, LeadActivity.action.in_(["Buyer enquiry submitted", "Partner referral submitted"])))]
+    if not leads:
+        st.info("You have not sent a builder enquiry yet. Open a project in Discover projects to request a callback, documents, or a visit.")
+        return
+    for lead in leads:
+        project = db.get(Project, lead.project_id)
+        activities = db.scalars(select(LeadActivity).where(LeadActivity.lead_id == lead.id).order_by(LeadActivity.created_at)).all()
+        initial = next((activity for activity in activities if activity.action in {"Buyer enquiry submitted", "Partner referral submitted"}), None)
+        with st.container(border=True):
+            st.markdown(f"### PC-{lead.id:06d} · {project.name if project else 'Project'}")
+            st.write(f"**Builder:** {project.builder.name if project else '—'} · **Status:** {lead.status} · **Assigned to:** {lead.assigned_to}")
+            if initial:
+                st.caption(f"Preferred follow-up: {initial.contact_channel or 'Not selected'} · email sharing: {'Allowed for this enquiry' if initial.share_contact else 'Not shared'}")
+                docs = json.loads(initial.requested_documents_json or "[]")
+                st.write("**Requested documents:** " + (", ".join(docs) if docs else "None"))
+                if initial.appointment_at:
+                    st.write(f"**Preferred site visit:** {initial.appointment_at.strftime('%d %b %Y · %H:%M')}")
+                if initial.due_at:
+                    st.caption(f"Builder response target · {initial.due_at.strftime('%d %b %Y · %H:%M UTC')}")
+            for activity in activities:
+                st.caption(f"{activity.created_at.strftime('%d %b %Y · %H:%M UTC')} · {activity.action} · {activity.status_after}" + (f" · {activity.note}" if activity.note else ""))
+
+
 def show_privacy(db, user: User):
     top_header("Privacy & consent", "Review purpose-specific demo preferences. Every change is stored as a timestamped consent record.")
     current = latest_consents(db, [user.id])
-    purposes = {"analytics": "Product analytics", "personalization": "Personalized discovery", "builder_marketing": "Builder contact and marketing"}
-    st.info("This demo uses synthetic buyer profiles and activity. In production, consent and access must be reviewed with legal counsel and compliant data controls.")
+    purposes = {"analytics": "Product analytics", "personalization": "Personalized discovery",
+                "builder_marketing": "Builder marketing campaigns",
+                "builder_contact": "Share contact details on builder enquiries"}
+    st.info("You can withdraw builder contact sharing here. The builder then sees the request status and history, but the account email is hidden. This demo stores preference records locally; production consent handling and retention require approved policy and controls.")
     with st.form("consent_form"):
         choices = {key: st.checkbox(label, value=current.get((user.id, key), False), key=f"consent-{key}") for key, label in purposes.items()}
         submit = st.form_submit_button("Save consent choices", type="primary")
@@ -1522,6 +1905,60 @@ def show_admin(db, user: User):
     roles = pd.DataFrame([{"Role": role, "Accounts": count} for role, count in db.execute(select(User.role, func.count(User.id)).group_by(User.role)).all()])
     fig = px.bar(roles, x="Role", y="Accounts", color="Role", title="Synthetic account coverage")
     st.plotly_chart(chart_layout(fig, height=300), width="stretch", alt="Number of synthetic demo accounts by platform role", config={"displayModeBar": False})
+    st.subheader("Signup requests")
+    pending_requests = db.scalars(select(SignupRequest).where(SignupRequest.status == "Pending").order_by(SignupRequest.created_at)).all()
+    if pending_requests:
+        st.dataframe(pd.DataFrame([{"Request": item.id, "Name": item.name, "Email": item.email,
+            "Requested role": item.requested_role.replace("_", " ").title(), "Market": item.city,
+            "Organization": item.organization or "—", "Submitted": item.created_at.strftime("%d %b %Y %H:%M UTC")}
+            for item in pending_requests]), width="stretch", hide_index=True, alt="Pending signup requests for admin review")
+        request_options = {f"#{item.id} · {item.name} · {item.email} · {item.requested_role}": item for item in pending_requests}
+        selected_request_label = st.selectbox("Request to review", list(request_options), key="signup-review-choice")
+        selected_request = request_options[selected_request_label]
+        role = selected_request.requested_role
+        builder_choices = db.scalars(select(Builder).where(Builder.city == selected_request.city).order_by(Builder.name)).all()
+        builder_map = {f"{item.name} · {item.city}": item for item in builder_choices}
+        with st.form(f"review-signup-{selected_request.id}"):
+            decision = st.selectbox("Decision", ["Approve", "Reject"])
+            approved_builder_label = None
+            if role in {"builder", "channel_partner"} and builder_map:
+                preferred = db.get(Builder, selected_request.preferred_builder_id) if selected_request.preferred_builder_id else None
+                default_label = next((label for label, item in builder_map.items() if preferred and item.id == preferred.id), next(iter(builder_map)))
+                approved_builder_label = st.selectbox("Assign builder scope", list(builder_map), index=list(builder_map).index(default_label))
+            review_note = st.text_input("Review note", max_chars=200)
+            review_submit = st.form_submit_button("Save review", type="primary")
+        if review_submit:
+            now = datetime.utcnow()
+            if decision == "Approve":
+                existing = db.scalar(select(User).where(User.email == selected_request.email))
+                if existing:
+                    st.error("An account already exists for this email. Resolve that record before approving the request.")
+                    return
+                assigned_builder = builder_map.get(approved_builder_label) if approved_builder_label else None
+                if role in {"builder", "channel_partner"} and not assigned_builder:
+                    st.error("Assign a builder before approving this role.")
+                    return
+                new_user = User(role=role, name=selected_request.name, email=selected_request.email,
+                    city=selected_request.city, locality="Whitefield" if selected_request.city == "Bengaluru" else "Dwarka",
+                    builder_id=assigned_builder.id if role == "builder" and assigned_builder else None)
+                db.add(new_user)
+                db.flush()
+                if role == "channel_partner":
+                    db.add(ChannelPartnerProfile(user_id=new_user.id,
+                        company_name=selected_request.organization or selected_request.name,
+                        builder_id=assigned_builder.id if assigned_builder else None,
+                        status="Approved", created_at=now, approved_at=now, approved_by=user.id))
+                selected_request.status = "Approved"
+            else:
+                selected_request.status = "Rejected"
+            selected_request.reviewed_at = now
+            selected_request.reviewed_by = user.id
+            db.add(AuditLog(actor_id=user.id, action="signup_request_reviewed",
+                detail=f"request={selected_request.id}; decision={decision}; note={review_note.strip()}"))
+            db.commit()
+            st.success(f"Signup request {decision.lower()}ed and recorded.")
+    else:
+        st.info("No pending signup requests.")
     st.subheader("Recent audit activity")
     audits = db.scalars(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(25)).all()
     st.dataframe(pd.DataFrame([{"Action": x.action, "Detail": x.detail, "At": x.created_at.strftime("%d %b %Y · %H:%M UTC")} for x in audits]), width="stretch", hide_index=True, alt="Recent platform audit actions")
@@ -1547,11 +1984,13 @@ def show_market_workspace(db, user: User, city: str):
 
 def show_property_workspace(db, user: User, city: str):
     top_header("Explore properties", "Discover, inspect the map, compare and save from one workspace.")
-    view = st.segmented_control("Property view", ["Discover projects", "Map explorer", "Compare & save"], default="Discover projects", key="property-workspace-tab")
+    view = st.segmented_control("Property view", ["Discover projects", "Map explorer", "Compare & save", "My requests"], default="Discover projects", key="property-workspace-tab")
     if view == "Map explorer":
         show_map(db, user, city, show_header=False)
     elif view == "Compare & save":
         show_saved(db, user, show_header=False)
+    elif view == "My requests":
+        show_buyer_requests(db, user)
     else:
         show_discover(db, user, city, show_header=False)
 
@@ -1562,17 +2001,20 @@ def main():
         if auth_configured:
             if st.user.is_logged_in:
                 email = str(st.user.email or "").lower()
-                try:
-                    role = st.secrets.get("user_roles", {}).get(email)
-                except Exception:
-                    role = None
-                if role in {"buyer", "builder", "admin"}:
-                    account_email = {"buyer": "demo.buyer@propclue.test", "builder": "demo.builder@propclue.test", "admin": "demo.admin@propclue.test"}[role]
-                    mapped_user = db.scalar(select(User).where(User.email == account_email))
+                mapped_user = db.scalar(select(User).where(User.email == email)) if email else None
+                if mapped_user and mapped_user.role in {"buyer", "builder", "admin", "channel_partner"} and (mapped_user.role != "builder" or mapped_user.builder_id):
+                    if mapped_user.role == "channel_partner":
+                        profile = db.scalar(select(ChannelPartnerProfile).where(ChannelPartnerProfile.user_id == mapped_user.id))
+                        if not profile:
+                            st.session_state.pop("user_id", None)
+                            st.session_state.auth_error = "Channel partner profile is not provisioned. Ask an admin to approve your builder affiliation."
+                            mapped_user = None
                     if mapped_user:
                         st.session_state.user_id = mapped_user.id
+                        st.session_state.auth_error = ""
                 else:
                     st.session_state.pop("user_id", None)
+                    st.session_state.auth_error = "This identity is not provisioned for PropClue. Submit a signup request or ask an admin to provision your exact verified email and builder scope."
             else:
                 st.session_state.pop("user_id", None)
         user = current_user(db)
@@ -1598,6 +2040,9 @@ def main():
                 st.Page(lambda: show_builder_portfolio(db, user, city), title="Portfolio MIS", url_path="portfolio-overview", icon=":material/monitoring:"),
                 st.Page(lambda: show_builder_market_workspace(db, user, city), title="Market intelligence", url_path="builder-market", icon=":material/trending_up:"),
                 st.Page(lambda: show_leads(db, user, city), title="Buyer demand & campaigns", url_path="buyer-demand-leads", icon=":material/group:"),
+            ],
+            "channel_partner": [
+                st.Page(lambda: show_channel_partner(db, user), title="Partner workspace", url_path="partner-workspace", icon=":material/handshake:")
             ],
             "admin": [
                 st.Page(lambda: show_admin(db, user), title="Platform overview", url_path="platform-overview", icon=":material/space_dashboard:"),
