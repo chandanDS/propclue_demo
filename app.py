@@ -16,6 +16,7 @@ import pydeck as pdk
 import requests
 import streamlit as st
 from sqlalchemy import select, func
+from sqlalchemy.exc import SQLAlchemyError
 
 # Streamlit Cloud secrets are exposed before database.py creates its engine.
 try:
@@ -27,7 +28,7 @@ except Exception:
 from database import (
     AIConversation, AIMessage, AuditLog, Builder, Campaign, ConsentRecord, DataSource,
     ChannelPartnerProfile, Event, Lead, LeadActivity, Locality, MarketObservation,
-    Project, ProjectComparison, ProjectEvidence, ProjectInventory, SavedProperty, SignupRequest,
+    Project, ProjectComparison, ProjectEvidence, ProjectInventory, SavedProperty,
     SessionLocal, User, init_db, reset_demo_data, score_from_events,
 )
 
@@ -36,8 +37,9 @@ st.set_page_config(page_title="PropClue | Real estate intelligence", page_icon="
                    initial_sidebar_state="expanded")
 
 
-@st.cache_resource
 def boot_database() -> bool:
+    # Re-run create_all on every Streamlit rerun so an existing local/cloud DB
+    # picks up newly added tables without requiring a manual reset.
     init_db()
     return True
 
@@ -490,65 +492,6 @@ def current_user(db):
     return db.get(User, user_id) if user_id else None
 
 
-def oidc_configured() -> bool:
-    try:
-        return bool(st.secrets.get("auth", {}))
-    except Exception:
-        return False
-
-
-def demo_login_enabled() -> bool:
-    """Allow passwordless persona login on localhost only unless explicitly opted in."""
-    configured = private_setting("DEMO_LOGIN_ENABLED").lower()
-    if configured in {"true", "1", "yes", "on"}:
-        return True
-    if configured in {"false", "0", "no", "off"}:
-        return False
-    try:
-        host = str(st.context.headers.get("host", "localhost")).split(":", 1)[0].lower()
-    except Exception:
-        host = ""
-    return host in {"localhost", "127.0.0.1", "::1"}
-
-
-def render_signup_request_form(db) -> None:
-    st.markdown("#### First time here? Request an account")
-    st.caption("Hosted signup requests are reviewed before access is granted. No password is collected on this form.")
-    with st.form("hosted-signup-request"):
-        name = st.text_input("Full name", max_chars=100)
-        email = st.text_input("Work or personal email", value=str(getattr(st.user, "email", "") or "").lower(), max_chars=180)
-        requested_role = st.selectbox("I am a", ["Buyer", "Builder", "Channel partner"])
-        city = st.selectbox("Market", ["Bengaluru", "Delhi"])
-        organization = st.text_input("Builder / channel partner company (if applicable)", max_chars=120)
-        builders = db.scalars(select(Builder).where(Builder.city == city).order_by(Builder.name)).all()
-        preferred_builder = None
-        if requested_role in {"Builder", "Channel partner"} and builders:
-            builder_labels = {f"{builder.name} · {builder.city}": builder for builder in builders}
-            preferred_builder = st.selectbox("Requested builder workspace", list(builder_labels))
-        accepted = st.checkbox("I agree that PropClue may use these details to review and respond to this access request.")
-        submit = st.form_submit_button("Submit signup request", type="primary")
-    if submit:
-        email = email.strip().lower()
-        if not name.strip() or "@" not in email or not accepted:
-            st.error("Enter your name and a valid email, and agree to the access-request use of these details.")
-            return
-        pending = db.scalar(select(SignupRequest).where(SignupRequest.email == email, SignupRequest.status == "Pending"))
-        if pending:
-            st.info(f"A signup request is already pending review (request #{pending.id}).")
-            return
-        db_builder_id = None
-        if preferred_builder:
-            db_builder_id = db.scalar(select(Builder.id).where(Builder.name == preferred_builder.split(" · ")[0], Builder.city == city))
-        request = SignupRequest(name=name.strip(), email=email, requested_role=requested_role.lower().replace(" ", "_"),
-            city=city, organization=organization.strip(), preferred_builder_id=db_builder_id,
-            consent_to_contact=True, created_at=datetime.utcnow())
-        db.add(request)
-        db.flush()
-        db.add(AuditLog(action="signup_request_submitted", detail=f"request={request.id}; role={request.requested_role}"))
-        db.commit()
-        st.success(f"Request #{request.id} submitted for review. You can sign in after an admin approves and provisions your account.")
-
-
 def login_screen(db):
     brand_lockup()
     st.markdown("<h1 style='font-family:Inter, sans-serif;font-weight:800;color:#0C213C;line-height:1.08'>Find your next property with more clarity.</h1>", unsafe_allow_html=True)
@@ -562,20 +505,8 @@ def login_screen(db):
         st.caption("Legal, tax, title, bank, price, distance, amenity and availability details are generated or unverified demo data. No property is confirmed dispute-free.")
     with right:
         with st.container(border=True):
-            st.subheader("Sign in")
-            if st.session_state.get("auth_error"):
-                st.error(st.session_state.pop("auth_error"))
-            if not demo_login_enabled():
-                st.info("Demo persona login is disabled on this host. Sign in with the configured identity provider.")
-                if oidc_configured():
-                    if st.button("Continue with secure sign-in", type="primary", width="stretch"):
-                        st.session_state.auth_mode = "oidc"
-                        st.login()
-                else:
-                    st.error("Identity provider is not configured. Add Streamlit [auth] settings and provision each user with a role and builder scope before opening access.")
-                render_signup_request_form(db)
-                return
-            st.caption("Local demo access only · passwords are not validated or stored. Do not use this mode for real buyer, builder, or partner accounts.")
+            st.subheader("Sign in or create a demo account")
+            st.caption("Demo mode · any password is accepted and never stored. Use only synthetic data.")
             mode = st.segmented_control("Account access", ["Sign in", "Create account"], default="Sign in", key="login-mode")
             account_type = st.selectbox("Account type", ["Buyer", "Builder", "Channel partner"], key="login_account_type")
             city = st.selectbox("Market", ["Bengaluru", "Delhi"], key="login_market")
@@ -635,18 +566,20 @@ def login_screen(db):
                         db.add(profile)
                     profile.company_name = partner_company.strip() or display_name
                     profile.builder_id = selected_builder_row.id if selected_builder_row else None
-                    profile.status = "Approved · local demo"
+                    profile.status = "Approved · demo"
                     profile.approved_at = datetime.utcnow()
                 db.add(AuditLog(actor_id=user.id, action="demo_login", detail=json.dumps({"role": role, "city": city})))
-                db.commit()
+                try:
+                    db.commit()
+                except SQLAlchemyError as exc:
+                    db.rollback()
+                    st.error("Could not save the demo account. Refresh the app and try another email; if it continues, check the database connection.")
+                    return
                 st.session_state.user_id = user.id
                 st.session_state.city_filter = city
                 st.session_state.demo_session = str(uuid.uuid4())
                 st.session_state.auth_mode = "demo"
                 st.rerun()
-            if oidc_configured() and st.button("Use configured identity provider", width="stretch"):
-                st.session_state.auth_mode = "oidc"
-                st.login()
 
 
 def brand_lockup(compact: bool = False):
@@ -1324,7 +1257,7 @@ def show_builder_inventory(db, user: User, city: str) -> None:
 def show_channel_partner(db, user: User) -> None:
     profile = db.scalar(select(ChannelPartnerProfile).where(ChannelPartnerProfile.user_id == user.id))
     top_header("Channel partner workspace", "Submit consent-based buyer referrals to your approved builder portfolio.")
-    if not profile or not profile.builder_id or profile.status not in {"Approved", "Approved · local demo"}:
+    if not profile or not profile.builder_id or profile.status not in {"Approved", "Approved · demo", "Approved · local demo"}:
         st.info("Your partner account is awaiting builder affiliation approval. Referrals are locked until an admin approves the account and assigns a builder.")
         return
     builder = db.get(Builder, profile.builder_id)
@@ -1905,60 +1838,6 @@ def show_admin(db, user: User):
     roles = pd.DataFrame([{"Role": role, "Accounts": count} for role, count in db.execute(select(User.role, func.count(User.id)).group_by(User.role)).all()])
     fig = px.bar(roles, x="Role", y="Accounts", color="Role", title="Synthetic account coverage")
     st.plotly_chart(chart_layout(fig, height=300), width="stretch", alt="Number of synthetic demo accounts by platform role", config={"displayModeBar": False})
-    st.subheader("Signup requests")
-    pending_requests = db.scalars(select(SignupRequest).where(SignupRequest.status == "Pending").order_by(SignupRequest.created_at)).all()
-    if pending_requests:
-        st.dataframe(pd.DataFrame([{"Request": item.id, "Name": item.name, "Email": item.email,
-            "Requested role": item.requested_role.replace("_", " ").title(), "Market": item.city,
-            "Organization": item.organization or "—", "Submitted": item.created_at.strftime("%d %b %Y %H:%M UTC")}
-            for item in pending_requests]), width="stretch", hide_index=True, alt="Pending signup requests for admin review")
-        request_options = {f"#{item.id} · {item.name} · {item.email} · {item.requested_role}": item for item in pending_requests}
-        selected_request_label = st.selectbox("Request to review", list(request_options), key="signup-review-choice")
-        selected_request = request_options[selected_request_label]
-        role = selected_request.requested_role
-        builder_choices = db.scalars(select(Builder).where(Builder.city == selected_request.city).order_by(Builder.name)).all()
-        builder_map = {f"{item.name} · {item.city}": item for item in builder_choices}
-        with st.form(f"review-signup-{selected_request.id}"):
-            decision = st.selectbox("Decision", ["Approve", "Reject"])
-            approved_builder_label = None
-            if role in {"builder", "channel_partner"} and builder_map:
-                preferred = db.get(Builder, selected_request.preferred_builder_id) if selected_request.preferred_builder_id else None
-                default_label = next((label for label, item in builder_map.items() if preferred and item.id == preferred.id), next(iter(builder_map)))
-                approved_builder_label = st.selectbox("Assign builder scope", list(builder_map), index=list(builder_map).index(default_label))
-            review_note = st.text_input("Review note", max_chars=200)
-            review_submit = st.form_submit_button("Save review", type="primary")
-        if review_submit:
-            now = datetime.utcnow()
-            if decision == "Approve":
-                existing = db.scalar(select(User).where(User.email == selected_request.email))
-                if existing:
-                    st.error("An account already exists for this email. Resolve that record before approving the request.")
-                    return
-                assigned_builder = builder_map.get(approved_builder_label) if approved_builder_label else None
-                if role in {"builder", "channel_partner"} and not assigned_builder:
-                    st.error("Assign a builder before approving this role.")
-                    return
-                new_user = User(role=role, name=selected_request.name, email=selected_request.email,
-                    city=selected_request.city, locality="Whitefield" if selected_request.city == "Bengaluru" else "Dwarka",
-                    builder_id=assigned_builder.id if role == "builder" and assigned_builder else None)
-                db.add(new_user)
-                db.flush()
-                if role == "channel_partner":
-                    db.add(ChannelPartnerProfile(user_id=new_user.id,
-                        company_name=selected_request.organization or selected_request.name,
-                        builder_id=assigned_builder.id if assigned_builder else None,
-                        status="Approved", created_at=now, approved_at=now, approved_by=user.id))
-                selected_request.status = "Approved"
-            else:
-                selected_request.status = "Rejected"
-            selected_request.reviewed_at = now
-            selected_request.reviewed_by = user.id
-            db.add(AuditLog(actor_id=user.id, action="signup_request_reviewed",
-                detail=f"request={selected_request.id}; decision={decision}; note={review_note.strip()}"))
-            db.commit()
-            st.success(f"Signup request {decision.lower()}ed and recorded.")
-    else:
-        st.info("No pending signup requests.")
     st.subheader("Recent audit activity")
     audits = db.scalars(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(25)).all()
     st.dataframe(pd.DataFrame([{"Action": x.action, "Detail": x.detail, "At": x.created_at.strftime("%d %b %Y · %H:%M UTC")} for x in audits]), width="stretch", hide_index=True, alt="Recent platform audit actions")
@@ -1968,7 +1847,6 @@ def show_admin(db, user: User):
         reset_demo_data(db)
         for key in ["user_id", "conversation_id", "selected_project"]:
             st.session_state.pop(key, None)
-        boot_database.clear()
         st.success("Demo data reset. Sign in again to continue.")
         st.rerun()
 
@@ -1997,26 +1875,6 @@ def show_property_workspace(db, user: User, city: str):
 
 def main():
     with SessionLocal() as db:
-        auth_configured = oidc_configured()
-        if auth_configured:
-            if st.user.is_logged_in:
-                email = str(st.user.email or "").lower()
-                mapped_user = db.scalar(select(User).where(User.email == email)) if email else None
-                if mapped_user and mapped_user.role in {"buyer", "builder", "admin", "channel_partner"} and (mapped_user.role != "builder" or mapped_user.builder_id):
-                    if mapped_user.role == "channel_partner":
-                        profile = db.scalar(select(ChannelPartnerProfile).where(ChannelPartnerProfile.user_id == mapped_user.id))
-                        if not profile:
-                            st.session_state.pop("user_id", None)
-                            st.session_state.auth_error = "Channel partner profile is not provisioned. Ask an admin to approve your builder affiliation."
-                            mapped_user = None
-                    if mapped_user:
-                        st.session_state.user_id = mapped_user.id
-                        st.session_state.auth_error = ""
-                else:
-                    st.session_state.pop("user_id", None)
-                    st.session_state.auth_error = "This identity is not provisioned for PropClue. Submit a signup request or ask an admin to provision your exact verified email and builder scope."
-            else:
-                st.session_state.pop("user_id", None)
         user = current_user(db)
         if not user:
             login_screen(db)
@@ -2027,8 +1885,6 @@ def main():
             city = get_city_filter(db, user)
             if st.button("Sign out", width="stretch"):
                 st.session_state.pop("user_id", None)
-                if auth_configured:
-                    st.logout()
                 st.rerun()
             st.markdown("---")
         page_groups = {

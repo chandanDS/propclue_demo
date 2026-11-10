@@ -80,22 +80,6 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
-class SignupRequest(Base):
-    __tablename__ = "signup_requests"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(100))
-    email: Mapped[str] = mapped_column(String(180), index=True)
-    requested_role: Mapped[str] = mapped_column(String(30), index=True)
-    city: Mapped[str] = mapped_column(String(40), default="Bengaluru")
-    organization: Mapped[str] = mapped_column(String(120), default="")
-    preferred_builder_id: Mapped[int | None] = mapped_column(ForeignKey("builders.id"), nullable=True)
-    status: Mapped[str] = mapped_column(String(30), default="Pending", index=True)
-    consent_to_contact: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-
-
 class ChannelPartnerProfile(Base):
     __tablename__ = "channel_partner_profiles"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

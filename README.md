@@ -19,23 +19,7 @@ Open <http://localhost:8501>. On first run, the app creates `data/propclue_demo.
 
 ### Demo personas
 
-On localhost, the start screen has **Sign in** and **Create account** modes for Buyer, Builder, and Channel partner personas. Any password is accepted and not stored; this is only for synthetic local data. On non-local hosts, open persona access is disabled by default. Set `DEMO_LOGIN_ENABLED = "true"` only if you intentionally want open demo access; never use that setting with real buyer data.
-
-On hosted environments, **Create account** is a signup request form (no password collected). An admin reviews and approves the request, assigns any required builder scope, then the user signs in through OIDC using the exact email on the approved account. Channel partner approvals create an assigned partner workspace. The first hosted admin must be provisioned directly in the database by the deployment owner.
-
-For authenticated access, configure Streamlit's built-in OpenID Connect support in `.streamlit/secrets.toml` or Community Cloud app secrets, then map verified emails to roles:
-
-```toml
-[auth]
-redirect_uri = "https://YOUR-APP.streamlit.app/oauth2callback"
-cookie_secret = "GENERATE_A_LONG_RANDOM_VALUE"
-client_id = "YOUR_OIDC_CLIENT_ID"
-client_secret = "YOUR_OIDC_CLIENT_SECRET"
-server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
-
-```
-
-Add the app URL to the OIDC provider's allowed redirect URLs. Each user must have a row with their verified email and approved role in `users`; builder rows must have the correct `builder_id`. Sign-in maps to that exact account and never falls back to a shared demo persona. A channel partner also needs an approved `channel_partner_profiles` row. The builder account's `builder_id` scopes its leads, projects, inventory, and campaigns.
+The start screen has **Sign in** and **Create account** modes for Buyer, Builder, and Channel partner personas. Enter any username/email and password; passwords are not checked or stored. Signup creates the demo account immediately, including the selected builder workspace for builder and channel partner personas. This intentionally open mode is only for the app's synthetic data and is not suitable for real customer information.
 
 ### Persistence
 
@@ -48,13 +32,13 @@ DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@HOST:5432/propclue"
 
 ## What works in this demo
 
-- Local Buyer, Builder, and Channel partner demo profiles, plus verified OIDC sign-in for provisioned hosted accounts. Buyer navigation is grouped into **Market overview** (pulse + intelligence) and **Explore properties** (discover + map + compare/save + requests).
+- Buyer, Builder, and Channel partner demo sign-in/signup on local and hosted deployments. Buyer navigation is grouped into **Market overview** (pulse + intelligence) and **Explore properties** (discover + map + compare/save + requests).
 - Buyer enquiry form creates a project-scoped builder lead with a request ID, buyer-visible status, preferred follow-up channel, optional per-enquiry contact-email sharing, document requests, site-visit preference, and a 24-hour response target. The builder sees the routed request, can assign an owner, set follow-up deadlines, record contact attempts, schedule or complete visits, and mark booked or closed-lost outcomes. Both sides see the activity timeline.
 - Builder lead outcome metrics separate buyer-submitted workflow requests from seeded sample leads. Response time, visits, bookings, and closed-lost counts use only workflow requests. Campaign delivery receipts remain explicitly unconnected.
 - Builder inventory workspace separates Available, Reserved, and Sold sample units. Every row shows source, update time, and verification status; buyers see the same unit-level demo register on the project profile.
 - Project evidence register shows source, source reference, check time, and verification status for RERA, title/EC, Khata, tax, technical/occupancy, bank approval, and price. All current rows are `Not connected` and `Unverified` until an authorized provider is integrated.
-- Local demo login is host-gated. Non-local access requires configured OIDC by default; OIDC users must be provisioned as scoped user rows and mapped by exact email. Use role-based builder rows and consent records before sharing real data.
-- First-time users can create a local demo account or submit a hosted access request for Buyer, Builder, or Channel partner. Admins review hosted requests, assign builder scope, and approve/reject them; passwords are not collected by this prototype.
+- Demo sign-in is intentionally open on hosted and local deployments. Passwords are ignored. This mode is for synthetic demonstration only and does not provide identity verification or production access controls.
+- First-time users can immediately create a Buyer, Builder, or Channel partner demo account. Builders and partners select a demo builder workspace at signup; no admin review is required.
 - Channel partner workspace supports consent-confirmed referrals into the assigned builder's project pipeline. Buyers can later sign in with the referred email to track the request. Partner referrals appear in the builder's lead queue with partner attribution and activity history.
 - Bengaluru, Delhi, and clearly separated NCR locality filters, with synthetic project inventory.
 - Interactive PyDeck map with project focus zoom, corrected hover details, synthetic metro/IT/business/hospital/school/mall/eatery points, and illustrative locality coverage shapes.
@@ -143,7 +127,7 @@ erDiagram
 
 ## Deploy to Streamlit Community Cloud
 
-Community Cloud deploys from a GitHub repository. Create or select a private repository for this demo, push this folder, connect GitHub to Community Cloud, then choose `app.py` as the entry point. Add `DATABASE_URL` under the app's Secrets settings if you want persistent cloud writes. Keep `.streamlit/secrets.toml`, database credentials, and other secrets out of Git. Configure `[auth]`, provision the initial admin and their exact verified email in the database, and review hosted signup requests from the Admin workspace. Non-local hosts disable demo persona access by default; `DEMO_LOGIN_ENABLED = "true"` is an intentional open-demo override for synthetic data only.
+Community Cloud deploys from a GitHub repository. Create or select a private repository for this demo, push this folder, connect GitHub to Community Cloud, then choose `app.py` as the entry point. Add `DATABASE_URL` under the app's Secrets settings if you want persistent cloud writes. Keep `.streamlit/secrets.toml`, database credentials, and other secrets out of Git. Signup and sign-in use demo personas with no password verification. Use only synthetic data; do not add real buyer contact or financial information.
 
 ### Optional Twilio test delivery
 
