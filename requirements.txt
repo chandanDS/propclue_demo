@@ -3,5 +3,6 @@ pandas>=2.2,<4
 plotly>=5.24,<7
 SQLAlchemy>=2.0,<3
 psycopg[binary]>=3.2,<4
+pymongo>=4.10,<5
 pydeck>=0.9,<1
 requests>=2.32,<3

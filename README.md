@@ -1,8 +1,8 @@
 # PropClue demo
 
-PropClue is a Streamlit product demo for Indian real-estate discovery and buyer engagement. This build is a compact, runnable prototype based on the supplied brief. It uses only deterministic **synthetic demo data** for Bengaluru, Delhi, and separately tagged NCR localities.
+PropClue is a Streamlit product demo for Indian real-estate discovery and buyer engagement. The buyer's **Live database** views read the actual local PropClue PostgreSQL catalogue and MongoDB area records. The buyer-builder workflow, activity, and campaign walkthrough remains synthetic demo data.
 
-> **Demo only.** The app does not contain verified listings, transactions, ownership, approvals, legal records, infrastructure commitments, or investment forecasts. Do not use it for legal, financial, lending, or investment decisions.
+> **Source records are not verification.** The connected databases may include estimated or AI-generated locality fields and unverified catalogue records. The app does not confirm listing freshness, transaction prices, ownership, approvals, legal status, or investment forecasts. Do not use it for legal, financial, lending, or investment decisions.
 
 ## Run locally
 
@@ -15,7 +15,14 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Open <http://localhost:8501>. On first run, the app creates `data/propclue_demo.db` and seeds synthetic records. The deterministic seed includes 2 cities, 30 localities, 40 builders, 100 projects, 36 monthly market observations per locality, 8,000 synthetic sale records, 2,000 synthetic rental records, 2,000 synthetic buyers, exactly 30,000 activity events, and 300 demo leads. The first startup may take a little while while records are generated.
+Open <http://localhost:8501>. On first run, the app creates `data/propclue_demo.db` and seeds synthetic buyer-builder workflow records. The **Live database** views connect read-only to local PropClue PostgreSQL (`localhost:5433/propcluev1`) and MongoDB (`localhost:27017/propcluev1`). Override these with `PROPCLUE_SOURCE_DATABASE_URL` and `PROPCLUE_SOURCE_MONGODB_URI` when needed. The demo workflow seed may take a little while on first startup.
+
+For Streamlit Cloud, add reachable database endpoints as app secrets. A database on your laptop is not reachable from Streamlit Cloud, so use a secured hosted endpoint or keep the live data view local.
+
+```toml
+PROPCLUE_SOURCE_DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@HOST:5432/propcluev1"
+PROPCLUE_SOURCE_MONGODB_URI = "mongodb+srv://USER:PASSWORD@HOST/propcluev1"
+```
 
 ### Demo personas
 
@@ -40,8 +47,8 @@ DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@HOST:5432/propclue"
 - Demo sign-in is intentionally open on hosted and local deployments. Passwords are ignored. This mode is for synthetic demonstration only and does not provide identity verification or production access controls.
 - First-time users can immediately create a Buyer, Builder, or Channel partner demo account. Builders and partners select a demo builder workspace at signup; no admin review is required.
 - Channel partner workspace supports consent-confirmed referrals into the assigned builder's project pipeline. Buyers can later sign in with the referred email to track the request. Partner referrals appear in the builder's lead queue with partner attribution and activity history.
-- Bengaluru, Delhi, and clearly separated NCR locality filters, with synthetic project inventory.
-- Interactive PyDeck map with project focus zoom, corrected hover details, synthetic metro/IT/business/hospital/school/mall/eatery points, and illustrative locality coverage shapes.
+- Live database view with active listings and published localities from PostgreSQL plus a matching locality intelligence document from MongoDB. Remaining demo market and builder workflow modules are marked as demo data.
+- Live market Map Explorer with pan/zoom, centroid-based radius search, listing-price and property-type filters, click-through locality details, and up-to-four-area comparison using PostgreSQL and MongoDB indicators. HSR Layout includes an isolated synthetic parcel/building overlay labeled `zoomedin_demo`; the builder acquisition map remains a labeled demo map.
 - Project intelligence profiles, project saving, up-to-four project comparison, and CSV report downloads.
 - 36-month asking-price and simulated-transaction series stored separately, rental indicators, supply, absorption, and enquiry charts.
 - Buyer-first market pulse with a focused two-line price view, 12-month movement, asking-to-simulated gap, recent enquiry signals, and explicit definitions for every headline count.
@@ -57,18 +64,18 @@ DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@HOST:5432/propclue"
 - Buyer natural-language assistant embedded in project discovery, with synthetic QoQ/YoY and USP answers and explicit EC, Khata, title, dispute, tax, technical-clearance, and bank-document status; no paid LLM key is required.
 - Discover filters for synthetic distance estimates to metro, IT parks, hospitals, malls and schools; project cards include synthetic USPs and same-locality/type/configuration price comparisons.
 - Admin data coverage/licensing registry, audit records, and a guarded synthetic-data reset.
-- SQLAlchemy models work with local SQLite or a PostgreSQL `DATABASE_URL`.
+- SQLAlchemy workflow models work with local SQLite or a PostgreSQL `DATABASE_URL`; the PropClue source catalogue is queried separately in read-only mode.
 
 ## Current demo boundaries
 
 - The demo uses a compact relational model for the core walkthrough, not every table in the full product brief. It does not include PostGIS, Alembic migrations, a separate FastAPI backend, payment workflows, or a production identity/consent governance service. The local persona switcher is for synthetic data only; configure OIDC, provision scoped users, and review consent/retention policy before using real buyer data.
-- Data events, enquiries, project values, localities, legal statuses, environmental signals, infrastructure points, and buyer identities are generated. Map coverage areas are illustrative shapes, not cadastral or locality boundaries.
+- Demo events, enquiries, project values, legal statuses, environmental signals, infrastructure points, and buyer identities are generated. Live source localities/listings are separate from demo workflows. The live map uses locality centroids and straight-line radius calculations; project rows lack coordinates and the database contains no district polygons, building footprints, or parcel boundaries. HSR `zoomedin_demo` shapes and scenario metrics are illustrative only, not cadastral or listing records.
 - Buyer-to-builder enquiry and status workflows are persisted in the demo database, but no email, phone, or WhatsApp notification is sent. The builder sees contact email only after the buyer explicitly shares it; withdrawing `builder_contact` consent hides it in the pipeline.
 - Inventory state changes and evidence/source records are demo entries, not synchronized feeds. No official ownership, title, approval, bank, tax, RERA, price, or availability provider is connected, and the app cannot label a project legally verified.
 - Builder booking counts, locality-allocated inventory, completion percentages, and land opportunity markers are display proxies generated for the prototype; they are not operational MIS or acquisition leads. Pricing cues use synthetic locality asking/supply/enquiry signals and omit live macroeconomic inputs.
 - The assistant is deterministic and answers a small set of analytical question patterns from the database. It is not a general-purpose language model.
 - AI usage currently reports zero LLM tokens: intent scoring is local Python, queries use parameterized SQLAlchemy, and insights are deterministic. Flood exposure demo values are synthetic seed placeholders, not calculated from real flood observations; the locality composite uses `100 - flood placeholder` as its environmental component.
-- External providers are listed for evaluation only. No external records or provider APIs are connected.
+- External providers are listed for evaluation only. The app reads the local PropClue database, but does not independently verify those records or connect to external provider APIs.
 
 ## Data provenance and procurement checklist
 
