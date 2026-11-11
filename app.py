@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 
 import pandas as pd
 import plotly.express as px
-import pydeck as pdk
+import plotly.graph_objects as go
 import requests
 import streamlit as st
 from sqlalchemy import select, func
@@ -952,10 +952,166 @@ def make_hsr_zoomin_demo(center_lat: float, center_lon: float) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def hsr_demo_figure(parcels: pd.DataFrame, center_lat: float, center_lon: float,
+                    selected_parcel_id: str | None = None) -> go.Figure:
+    """Local-plane polygon map that does not depend on external basemap tiles."""
+    from math import cos, radians
+    lon_scale = 111_320 * cos(radians(center_lat))
+    lat_scale = 111_320
+    palette = {"Residential": "#5eead4", "Mixed use": "#2dd4bf", "Commercial": "#0f766e"}
+    fig = go.Figure()
+    for row in parcels.itertuples(index=False):
+        x = [(point[0] - center_lon) * lon_scale for point in row.polygon]
+        y = [(point[1] - center_lat) * lat_scale for point in row.polygon]
+        x.append(x[0]); y.append(y[0])
+        selected = row.parcel_id == selected_parcel_id
+        hover = (f"<b>{row.name}</b><br>{row.land_use}<br>₹{row.asking_psf:,.0f}/sq ft"
+                 f"<br>{row.units} sample homes · {row.floors} floors"
+                 f"<br>{row.absorption_pct:.1f}% monthly absorption · {row.yoy_pct:+.1f}% YoY"
+                 "<br>All values are synthetic · zoomedin_demo")
+        fig.add_trace(go.Scatter(x=x, y=y, mode="lines", fill="toself",
+            fillcolor=palette.get(row.land_use, "#99f6e4"),
+            line={"color":"#f59e0b" if selected else "#134e4a", "width":3 if selected else 1},
+            name=row.name, text=[hover] * len(x), hovertemplate="%{text}<extra></extra>",
+            showlegend=False))
+        bx = [(point[0] - center_lon) * lon_scale for point in row.building_polygon]
+        by = [(point[1] - center_lat) * lat_scale for point in row.building_polygon]
+        bx.append(bx[0]); by.append(by[0])
+        fig.add_trace(go.Scatter(x=bx, y=by, mode="lines", fill="toself",
+            fillcolor="rgba(245,158,11,.72)", line={"color":"#fff7ed", "width":1},
+            name=row.building_name, text=[hover] * len(bx), hovertemplate="%{text}<extra></extra>",
+            showlegend=False))
+    for label, color in palette.items():
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", marker={"size":10, "color":color},
+                                 name=label, hoverinfo="skip"))
+    fig.update_layout(title="HSR Layout building blocks · zoomedin_demo",
+        height=560, margin={"l":20,"r":20,"t":55,"b":20},
+        paper_bgcolor="white", plot_bgcolor="#f8fafc", hovermode="closest",
+        legend={"orientation":"h","y":1.08,"x":0}, dragmode="zoom")
+    fig.update_xaxes(title="Meters east / west of HSR centre", showgrid=True, gridcolor="#e2e8f0", zeroline=False)
+    fig.update_yaxes(title="Meters north / south of HSR centre", scaleanchor="x", scaleratio=1,
+                     showgrid=True, gridcolor="#e2e8f0", zeroline=False)
+    return fig
+
+
+def show_area_agent_report(db, user: User, area: pd.Series, doc: dict,
+                           active_area_listings: pd.DataFrame) -> None:
+    """Explain source signals, trace an illustrative shock, and gate action on review."""
+    market = doc.get("real_estate", {}) if isinstance(doc, dict) else {}
+    people = doc.get("demography", {}) if isinstance(doc, dict) else {}
+    infra = doc.get("infrastructure", {}) if isinstance(doc, dict) else {}
+    future = doc.get("future_potential", {}) if isinstance(doc, dict) else {}
+    connectivity = doc.get("connectivity", {}) if isinstance(doc, dict) else {}
+    sectors = doc.get("sectors", []) if isinstance(doc, dict) else []
+    sector_data = next((s.get("raw_data", {}) for s in sectors if isinstance(s, dict) and s.get("slug") == "it_tech"), {})
+    meta = doc.get("meta", {}) if isinstance(doc, dict) else {}
+    quality = str(meta.get("data_quality", "not specified"))
+    sources = meta.get("data_sources", [])
+    synthetic_source = any("ai_generated" in str(x).casefold() for x in sources)
+    pg_listings = len(active_area_listings)
+    mongo_listings = market.get("active_listings_count") if isinstance(market, dict) else None
+    two_bed_rent = market.get("avg_rent_2bhk_inr") if isinstance(market, dict) else None
+    monthly_income = people.get("avg_monthly_household_income_inr") if isinstance(people, dict) else None
+    rent_burden = (float(two_bed_rent) / float(monthly_income) * 100) if two_bed_rent and monthly_income else None
+
+    st.markdown(f"### Area intelligence · {area['name']}")
+    st.caption(f"Supervisor report · source quality: {quality} · source tags: {', '.join(map(str, sources)) if sources else 'not specified'} · generated scenario outputs use `intelligence_demo`.")
+    agent_cols = st.columns(4, gap="small")
+    with agent_cols[0].container(border=True):
+        st.markdown("**Market agent**")
+        psf = market.get("avg_sale_psf_apartment") if isinstance(market, dict) else None
+        st.metric("Apartment ask", f"₹{float(psf):,.0f}/sq ft" if psf else "Not stored")
+        trend = market.get("price_trend_pct_6m") if isinstance(market, dict) else None
+        st.caption(f"6-month trend {float(trend):+.1f}% · MongoDB" if trend is not None else "6-month trend not stored")
+    with agent_cols[1].container(border=True):
+        st.markdown("**Demand agent**")
+        st.metric("Renter share", f"{people['renter_ratio_pct']}%" if isinstance(people, dict) and people.get("renter_ratio_pct") is not None else "Not stored")
+        st.caption(f"2BHK rent / household income: {rent_burden:.1f}% · intelligence_demo" if rent_burden is not None else "Rent burden cannot be calculated from stored fields")
+    with agent_cols[2].container(border=True):
+        st.markdown("**Supply & access agent**")
+        st.metric("PostgreSQL matched projects", f"{pg_listings:,}")
+        if mongo_listings is not None:
+            st.caption(f"MongoDB area count: {int(mongo_listings):,} · cross-database field, not confirmed inventory")
+        st.caption(f"Nearest metro stored at {connectivity.get('nearest_metro_distance_km')} km" if isinstance(connectivity, dict) and connectivity.get("nearest_metro_distance_km") is not None else "No metro distance stored")
+    with agent_cols[3].container(border=True):
+        st.markdown("**Data quality agent**")
+        if mongo_listings is not None and int(mongo_listings) != pg_listings:
+            st.warning(f"Catalogue mismatch: MongoDB area count {int(mongo_listings):,} vs {pg_listings:,} exact PostgreSQL matches.")
+        else:
+            st.write("No active-listing count mismatch detected in the selected fields.")
+        st.caption("AI-generated area fields need source verification." if synthetic_source else "Confirm freshness and provenance before decisions.")
+
+    st.markdown("#### Trace a shock through this locality · intelligence_demo")
+    scenarios = ["Baseline area signals", "Aluminium input cost +10%", "Home-loan rate +0.5 percentage points", "Metro opening delayed 12 months", "IT employment -5%"]
+    scenario = st.selectbox("Scenario", scenarios, key=f"area-agent-scenario-{area['slug']}")
+    chain = []
+    formula = "This baseline reports stored area indicators; it does not predict outcomes."
+    if scenario == "Aluminium input cost +10%":
+        share = st.slider("Assumed aluminium share of build cost (%) · intelligence_demo", 1, 10, 3, key=f"aluminium-share-{area['slug']}")
+        build_cost_change = share * 10 / 100
+        formula = f"Assumption: aluminium is {share}% of build cost. A 10% aluminium shock implies about +{build_cost_change:.2f}% build-cost pressure (10% × {share}%). It does not imply the same home-price increase."
+        chain = ["Aluminium price +10%", f"Build cost +{build_cost_change:.2f}% if share is {share}%", "Builder margin / launch price decision", "Launch timing and new supply", "Buyer affordability, absorption and resale competition"]
+    elif scenario == "Home-loan rate +0.5 percentage points":
+        principal, years, base_rate = 8_000_000, 20, 8.5
+        def emi(rate):
+            monthly = rate / 1200
+            periods = years * 12
+            return principal * monthly * (1 + monthly) ** periods / ((1 + monthly) ** periods - 1)
+        base_emi, shock_emi = emi(base_rate), emi(base_rate + .5)
+        change = (shock_emi / base_emi - 1) * 100
+        formula = f"Illustration only: ₹80 lakh loan, 20 years, assumed 8.5% → 9.0%; monthly EMI rises about {change:.1f}% ({money(base_emi)} → {money(shock_emi)}). No lender rates are connected."
+        chain = ["Loan rate +0.5 pp", f"Illustrative EMI +{change:.1f}%", "Buyer budget / loan eligibility", "Enquiry-to-visit and absorption", "Negotiation pressure on higher-ticket homes"]
+    elif scenario == "Metro opening delayed 12 months":
+        station = connectivity.get("nearest_metro_station", "planned transit link") if isinstance(connectivity, dict) else "planned transit link"
+        distance = connectivity.get("nearest_metro_distance_km") if isinstance(connectivity, dict) else None
+        formula = f"Stored access: {station}" + (f" · {distance} km" if distance is not None else "") + ". Delay effect is qualitative; a verified project schedule and route-level demand series are not connected."
+        chain = ["Metro opening delayed 12 months", "Longer wait for access benefit", "Commuter preference / search radius", "Corridor demand and absorption", "Transit-premium pricing risk"]
+    elif scenario == "IT employment -5%":
+        workforce_share = sector_data.get("tech_workforce_share_pct") if isinstance(sector_data, dict) else None
+        exposed = float(workforce_share) * .05 if workforce_share is not None else None
+        formula = (f"Stored IT workforce share {workforce_share}%; a 5% shock implies {exposed:.1f}% of the total-workforce proxy exposed." if exposed is not None else "No locality IT-workforce share is stored; this pathway is qualitative.") + " Both the shock and pathway are illustrative, not employment forecasts."
+        chain = ["IT employment -5%", "Household income / job confidence", "Rental demand and upgrade purchases", "Vacancy and absorption", "Rent and resale-price pressure"]
+    else:
+        chain = ["Observed locality fields", "Buyer demand + renter share", "Matched project supply", "Price / rent / absorption signals", "Supervisor checks source gaps before action"]
+    flow = "flowchart LR\n" + "\n".join(f'  N{i}["{label}"]' + (f" --> N{i+1}" if i < len(chain) - 1 else "") for i, label in enumerate(chain))
+    st.mermaid_chart(flow, width="stretch", alt=f"Illustrative {scenario} impact pathway for {area['name']}")
+    st.caption(formula)
+    evidence = pd.DataFrame([{"Path stage": f"{i+1}. {label}", "Evidence tag": "Stored PropClue source" if i == 0 and scenario == "Baseline area signals" else "intelligence_demo assumption"} for i, label in enumerate(chain)])
+    st.dataframe(evidence, width="stretch", hide_index=True, height=210, alt="Causal pathway stages and source status for the selected scenario")
+
+    recommendation = "Reconcile MongoDB area counts against the PostgreSQL project catalogue, then verify project availability and price dates before using this area for decisions." if mongo_listings is not None and int(mongo_listings) != pg_listings else "Validate the signal sources and compare verified project availability, prices and documents before acting on this scenario."
+    if user.role == "buyer":
+        persona = doc.get("gap_analysis", {}).get("b2c_recommendation") if isinstance(doc.get("gap_analysis"), dict) else None
+        supervisor_note = persona or "Compare current project availability and total ownership cost with the stored locality signals; independently verify the source and date of each listing."
+        title = "Buyer review draft"
+    elif user.role == "builder":
+        persona = doc.get("gap_analysis", {}).get("builder_recommendation") if isinstance(doc.get("gap_analysis"), dict) else None
+        supervisor_note = persona or recommendation
+        title = "Builder review draft"
+    else:
+        supervisor_note = recommendation
+        title = "Supervisor review draft"
+    with st.container(border=True):
+        st.markdown(f"#### Supervisor recommendation · {title}")
+        st.write(supervisor_note)
+        st.caption("Specialists provide evidence and a scenario pathway; the supervisor drafts a recommendation. Human approval is required before any action. This prototype does not execute campaigns, change prices, or contact anyone.")
+        review_note = st.text_input("Human reviewer note (optional)", key=f"area-review-note-{area['slug']}")
+        approve_col, revise_col, status_col = st.columns([1, 1, 2])
+        if approve_col.button("Approve draft", key=f"approve-area-agent-{area['slug']}", type="primary"):
+            st.session_state[f"area_agent_review_{area['slug']}"] = "Approved · demo"
+            db.add(AuditLog(actor_id=user.id, action="intelligence_demo_approved", detail=json.dumps({"area":str(area["slug"]),"scenario":scenario,"note":review_note})))
+            db.commit()
+        if revise_col.button("Request revision", key=f"revise-area-agent-{area['slug']}"):
+            st.session_state[f"area_agent_review_{area['slug']}"] = "Revision requested · demo"
+            db.add(AuditLog(actor_id=user.id, action="intelligence_demo_revision_requested", detail=json.dumps({"area":str(area["slug"]),"scenario":scenario,"note":review_note})))
+            db.commit()
+        status_col.caption("Review state: " + st.session_state.get(f"area_agent_review_{area['slug']}", "Pending human review"))
+
+
 def show_map(db, user: User, city: str, show_header: bool = True):
-    """Live market map using only stored locality coordinates and listing records."""
+    """Interactive locality map, isolated HSR building prototype, and area agent review."""
     if show_header:
-        top_header("Map explorer", "Explore live locality markets, nearby listings, price ranges and area signals.")
+        top_header("Map explorer", "Zoom from district context to locality signals, then switch to the HSR building-block demo when you need parcel-scale detail.")
     market_slug = st.session_state.get("market_slug", "")
     try:
         all_localities, all_listings = load_catalog()
@@ -973,16 +1129,26 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     listing_counts_all = listings["locality_match_slug"].dropna().value_counts().to_dict()
     localities["active_listings"] = localities["slug"].map(listing_counts_all).fillna(0).astype(int)
     locality_slugs = localities["slug"].astype(str).tolist()
+    hsr_slug = "bangalore-hsr-layout"
+    map_modes = ["Live locality map"]
+    if market_slug == "bangalore" and hsr_slug in locality_slugs:
+        map_modes.append("HSR building demo · zoomedin_demo")
+    map_mode = st.segmented_control("Map layer", map_modes, default=map_modes[0], key="map-layer-mode-v2")
+    zoomedin_demo_mode = map_mode == "HSR building demo · zoomedin_demo"
     preferred_center = max(locality_slugs, key=lambda slug: listing_counts_all.get(slug, 0))
-    center_slug = st.selectbox(
-        "Search center", locality_slugs, index=locality_slugs.index(preferred_center),
-        format_func=lambda slug: str(localities.loc[localities["slug"] == slug, "name"].iloc[0]),
-        key="live-map-center-v2",
-    )
+    if zoomedin_demo_mode:
+        center_slug = hsr_slug
+        st.caption("Demo map is centred on HSR Layout automatically. Generated parcels and buildings are separate from live listings.")
+    else:
+        center_slug = st.selectbox(
+            "Search center", locality_slugs, index=locality_slugs.index(preferred_center),
+            format_func=lambda slug: str(localities.loc[localities["slug"] == slug, "name"].iloc[0]),
+            key="live-map-center-v3",
+        )
     center = localities.loc[localities["slug"] == center_slug].iloc[0]
-    st.markdown("#### Lock an area for analysis")
+    st.markdown("#### Lock an area and build its intelligence report")
     lock_col, status_col = st.columns([1, 2], vertical_alignment="center")
-    if lock_col.button("Lock selected locality", key="lock-live-map-area", type="primary"):
+    if lock_col.button("Lock & run area analysis", key="lock-live-map-area-v2", type="primary"):
         st.session_state["locked_area_slug"] = center_slug
         st.session_state["locked_area_name"] = str(center["name"])
         st.session_state.pop("area_agent_review", None)
@@ -991,25 +1157,24 @@ def show_map(db, user: User, city: str, show_header: bool = True):
         st.session_state.pop("locked_area_name", None)
         st.session_state.pop("area_agent_review", None)
     locked_slug = st.session_state.get("locked_area_slug")
-    if locked_slug:
+    locked_in_market = bool(locked_slug and locked_slug in set(locality_slugs))
+    if locked_in_market:
         locked_name = localities.loc[localities["slug"] == locked_slug, "name"]
-        status_col.success(f"Locked: {locked_name.iloc[0] if not locked_name.empty else st.session_state.get('locked_area_name')} · analyst outputs stay scoped to this area")
+        status_col.success(f"Locked: {locked_name.iloc[0]} · analysis below is scoped to this area")
     else:
-        status_col.caption("Choose a locality and lock it to run the supervisor and specialist analysis.")
+        status_col.caption("Pick a locality, then lock it. The supervisor report will appear here before the map.")
 
     price_low = listings["price_min"].fillna(listings["price_max"])
     price_high = listings["price_max"].fillna(listings["price_min"])
     price_values = pd.concat([price_low, price_high]).dropna().astype(float)
     filter_cols = st.columns([1, 1, 1.4, 1])
     radius_km = filter_cols[0].slider("Search radius (km)", 1, 50, 20, key="live-map-radius-v2")
-    is_hsr_center = market_slug == "bangalore" and center_slug == "bangalore-hsr-layout"
-    zoom_options = ["Market", "Locality", "Street-level area"]
-    if is_hsr_center:
-        zoom_options.append("Building blocks · zoomedin_demo")
-    zoom_label = filter_cols[1].selectbox("Map scale", zoom_options, index=1, key="live-map-scale")
-    zoomedin_demo_mode = is_hsr_center and zoom_label == "Building blocks · zoomedin_demo"
-    zoom = {"Market": 8.5, "Locality": 12.5, "Street-level area": 15.5,
-            "Building blocks · zoomedin_demo": 17.2}[zoom_label]
+    if zoomedin_demo_mode:
+        filter_cols[1].caption("Map scale: block / building footprint · `zoomedin_demo`")
+        zoom = 17.2
+    else:
+        zoom_label = filter_cols[1].selectbox("Map scale", ["District overview", "Locality", "Street / precinct"], index=1, key="live-map-scale-v2")
+        zoom = {"District overview": 9.5, "Locality": 12.5, "Street / precinct": 15.5}[zoom_label]
     if not price_values.empty:
         minimum_cr = max(0.0, round(float(price_values.min()) / 10_000_000, 1))
         maximum_cr = max(minimum_cr + 0.1, round(float(price_values.max()) / 10_000_000, 1))
@@ -1034,6 +1199,18 @@ def show_map(db, user: User, city: str, show_header: bool = True):
         matching_listings = matching_listings[matching_listings["project_type"].isin(selected_types)]
     else:
         matching_listings = matching_listings.iloc[0:0]
+
+    if locked_in_market:
+        locked_row = localities.loc[localities["slug"] == locked_slug].iloc[0]
+        try:
+            locked_doc = load_area_dna(str(locked_row["slug"]), str(locked_row.get("mongodb_id") or "")) or {}
+        except Exception:
+            locked_doc = {}
+        locked_area_listings = listings[listings["locality_match_slug"] == locked_slug]
+        with st.container(border=True):
+            show_area_agent_report(db, user, locked_row, locked_doc, locked_area_listings)
+    else:
+        st.info("Choose an area and select **Lock & run area analysis** to see source-backed market agents, an impact pathway, and a supervisor draft here.", icon=":material/lock_open:")
 
     hsr_demo_parcels = pd.DataFrame()
     if zoomedin_demo_mode:
@@ -1078,95 +1255,29 @@ def show_map(db, user: User, city: str, show_header: bool = True):
         if not values.empty:
             listing_price_ranges[str(slug)] = f" · listed {money(values.min(), True)}–{money(values.max(), True)}"
     map_points["detail"] = map_points.apply(lambda row: row["detail"] + listing_price_ranges.get(str(row["slug"]), " · no listed price"), axis=1)
-    anchor_ring = pd.DataFrame([{
-        "latitude": float(center["latitude"]), "longitude": float(center["longitude"]),
-        "radius_m": int(radius_km * 1000),
-    }])
-    layers = []
-    if not zoomedin_demo_mode:
-        layers.append(pdk.Layer(
-            "ScatterplotLayer", id="search-radius", data=anchor_ring,
-            get_position="[longitude, latitude]", get_radius="radius_m", radius_units="meters",
-            radius_min_pixels=16, radius_max_pixels=500, stroked=True, filled=True,
-            get_fill_color="[13, 148, 136, 18]", get_line_color="[13, 148, 136, 150]",
-            line_width_min_pixels=2, pickable=False,
-        ))
-    if zoomedin_demo_mode and not hsr_demo_parcels.empty:
-        min_lat, max_lat = hsr_demo_parcels["latitude"].min(), hsr_demo_parcels["latitude"].max()
-        min_lon, max_lon = hsr_demo_parcels["longitude"].min(), hsr_demo_parcels["longitude"].max()
-        zone = pd.DataFrame([{"polygon": [[
-            [min_lon - .001, min_lat - .001], [max_lon + .001, min_lat - .001],
-            [max_lon + .001, max_lat + .001], [min_lon - .001, max_lat + .001],
-        ]]}])
-        layers.append(pdk.Layer(
-            "PolygonLayer", id="zoomedin_demo_zone", data=zone,
-            get_polygon="polygon", get_fill_color="[13, 148, 136, 8]",
-            get_line_color="[13, 148, 136, 200]", line_width_min_pixels=3,
-            stroked=True, filled=True, pickable=False,
-        ))
-        layers.append(pdk.Layer(
-            "PolygonLayer", id="zoomedin_demo_parcels", data=hsr_demo_parcels,
-            get_polygon="polygon", get_fill_color="fill_color",
-            get_line_color="[15, 38, 61, 220]", line_width_min_pixels=2,
-            stroked=True, filled=True, pickable=True, auto_highlight=True,
-        ))
-        demo_buildings = hsr_demo_parcels.copy()
-        demo_buildings["name"] = demo_buildings["building_name"]
-        demo_buildings["detail"] = demo_buildings.apply(
-            lambda row: f"Synthetic building footprint · {int(row['floors'])} floors · {int(row['units'])} mock homes · zoomedin_demo",
-            axis=1,
-        )
-        layers.append(pdk.Layer(
-            "PolygonLayer", id="zoomedin_demo_buildings", data=demo_buildings,
-            get_polygon="building_polygon", get_fill_color="[245, 158, 11, 190]",
-            get_line_color="[255, 255, 255, 255]", line_width_min_pixels=1,
-            stroked=True, filled=True, pickable=True, auto_highlight=True,
-        ))
-    layers.append(pdk.Layer(
-            "ScatterplotLayer", id="locality-markers", data=map_points,
-            get_position="[longitude, latitude]", get_radius="point_radius_m", radius_units="meters",
-            radius_min_pixels=6, radius_max_pixels=16, stroked=True, filled=True,
-            get_fill_color="fill_color", get_line_color="[255, 255, 255, 240]",
-            line_width_min_pixels=1, pickable=True, auto_highlight=True,
-        ))
-    deck = pdk.Deck(
-        layers=layers,
-        initial_view_state=pdk.ViewState(
-            latitude=float(center["latitude"]), longitude=float(center["longitude"]), zoom=zoom, pitch=0,
-        ),
-        map_style=os.environ.get("PROPCLUE_MAP_STYLE", "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"),
-        tooltip={"html": "<b>{name}</b><br/>{detail}", "style": {"color": "white"}},
-    )
+    clicked_slug = None
+    clicked_demo_parcel = None
     if zoomedin_demo_mode:
-        map_event = st.pydeck_chart(
-            deck, width="stretch", height=570, key=f"live-map-{market_slug}-{center_slug}",
-            on_select="rerun", selection_mode="single-object",
-            alt=f"Synthetic HSR building map with a {radius_km} km radius search context",
-        )
+        if not hsr_demo_parcels.empty:
+            valid_ids = set(hsr_demo_parcels["parcel_id"])
+            selected_demo_id = st.session_state.get("hsr-zoomedin-demo-selected-parcel")
+            if selected_demo_id not in valid_ids:
+                selected_demo_id = hsr_demo_parcels.iloc[0]["parcel_id"]
+            hsr_fig = hsr_demo_figure(hsr_demo_parcels, float(center["latitude"]), float(center["longitude"]), str(selected_demo_id))
+            st.plotly_chart(hsr_fig, width="stretch", key="hsr-zoomedin-demo-map-v2",
+                            config={"displayModeBar": True, "scrollZoom": True},
+                            alt="Zoomable HSR synthetic building-block map with hover details for each sample parcel")
+            st.caption("Each parcel is a generated polygon; the smaller gold inset is a sample building footprint. Hover for asking price, floors, units, absorption and trend. Drag to zoom and use the toolbar to reset.")
     else:
         st.map(map_points, latitude="latitude", longitude="longitude", color="map_color", size="map_size",
                zoom=int(zoom), width="stretch", height=570,
                alt=f"Live locality map for {center['city']} with locality points inside a {radius_km} km radius")
-        st.caption(f"Map shows locality centroids within {radius_km} km of {center['name']}. The basemap follows Streamlit's built-in map style; no external tile style is required.")
+        st.caption(f"Map shows locality centroids within {radius_km} km of {center['name']}. Search radius filters the map and the coverage table below.")
     radius_table = nearby.sort_values("distance_km").head(15).copy()
     if not radius_table.empty:
         radius_table["Project records"] = radius_table["slug"].map(listing_counts).fillna(0).astype(int)
         st.markdown(f"**Radius coverage · nearest {len(radius_table)} locality records**")
         st.dataframe(radius_table[["name", "distance_km", "Project records", "composite_score", "connectivity_score"]].rename(columns={"name":"Locality", "distance_km":"Distance km", "composite_score":"Area score / 10", "connectivity_score":"Connectivity / 10"}), width="stretch", hide_index=True, height=280, alt="Nearest locality scores and exact matched project counts inside the radius search")
-    clicked_slug = None
-    clicked_demo_parcel = None
-    try:
-        selected_objects = map_event.selection.objects or {}
-        selected_markers = selected_objects.get("locality-markers", [])
-        if selected_markers:
-            clicked_slug = selected_markers[0].get("slug")
-        for layer_id in ["zoomedin_demo_buildings", "zoomedin_demo_parcels"]:
-            selected_parcels = selected_objects.get(layer_id, [])
-            if selected_parcels:
-                clicked_demo_parcel = selected_parcels[0].get("parcel_id")
-                break
-    except (AttributeError, TypeError):
-        pass
     focus_slug = clicked_slug if clicked_slug in set(localities["slug"]) else center_slug
     focus = localities.loc[localities["slug"] == focus_slug].iloc[0]
     nearby_slugs = set(nearby["slug"])
@@ -1378,66 +1489,6 @@ def show_map(db, user: User, city: str, show_header: bool = True):
             st.dataframe(land_use_summary, width="stretch", hide_index=True,
                          alt="Synthetic HSR Layout parcel counts and median asking price by mock land-use category")
             st.caption(f"Selected mock IDs: {selected_parcel['parcel_id']} / {selected_parcel['building_id']}. Suffix `zoomedin_demo` marks all generated geometry and insight values.")
-
-    if locked_slug:
-        locked_area = localities.loc[localities["slug"] == locked_slug]
-        if not locked_area.empty:
-            locked_row = locked_area.iloc[0]
-            try:
-                locked_doc = load_area_dna(str(locked_row["slug"]), str(locked_row.get("mongodb_id") or "")) or {}
-            except Exception:
-                locked_doc = {}
-            locked_market = locked_doc.get("real_estate", {}) if isinstance(locked_doc, dict) else {}
-            locked_future = locked_doc.get("future_potential", {}) if isinstance(locked_doc, dict) else {}
-            locked_matched = matching_listings[matching_listings["locality_match_slug"] == locked_slug]
-            scenario = st.selectbox("Trace a market shock through the property system · intelligence_demo",
-                ["No shock · baseline", "Home loan rates +0.5 percentage points", "Key metro opening delayed 12 months", "Construction material costs +10%"],
-                key="area-intelligence-scenario")
-            st.markdown("### Supervisor + specialist agents · intelligence_demo")
-            st.caption("The agents below are deterministic prototype roles. They read local PostgreSQL/MongoDB fields, then a supervisor drafts a reviewable recommendation. No LLM, external data feed, campaign or real-world action is invoked.")
-            agent_cols = st.columns(4, gap="small")
-            agent_cols[0].markdown("**Market analyst**")
-            psf = locked_market.get("avg_sale_psf_apartment") if isinstance(locked_market, dict) else None
-            agent_cols[0].write(f"Stored apartment ask: ₹{float(psf):,.0f}/sq ft" if psf else "No locality psf benchmark stored.")
-            trend = locked_market.get("price_trend_pct_6m") if isinstance(locked_market, dict) else None
-            agent_cols[0].caption(f"Stored 6-month trend: {trend}%" if trend is not None else "Trend field unavailable.")
-            agent_cols[1].markdown("**Supply analyst**")
-            agent_cols[1].write(f"{len(locked_matched)} active listings exactly matched to this area after current filters.")
-            agent_cols[1].caption("Listings are not verified available-unit inventory.")
-            agent_cols[2].markdown("**Infrastructure analyst**")
-            infra_items = []
-            if isinstance(locked_future, dict):
-                infra_items += [str(x) for x in locked_future.get("upcoming_metro_projects", [])]
-                infra_items += [str(x) for x in locked_future.get("upcoming_infra_other", [])]
-            agent_cols[2].write("; ".join(infra_items[:3]) if infra_items else "No future infrastructure items stored.")
-            agent_cols[2].caption("MongoDB area document; source quality varies.")
-            agent_cols[3].markdown("**Data & risk analyst**")
-            data_sources = locked_doc.get("meta", {}).get("data_sources", []) if isinstance(locked_doc, dict) else []
-            ai_generated = any("ai_generated" in str(source).casefold() for source in data_sources)
-            agent_cols[3].write("Some stored locality fields are tagged AI generated." if ai_generated else "Check source metadata before relying on area signals.")
-            agent_cols[3].caption("Project coordinates, parcel boundaries and legal due-diligence documents are not connected.")
-
-            chain_by_scenario = {
-                "No shock · baseline": "Baseline → compare stored area price, supply and infrastructure signals → verify source gaps before action.",
-                "Home loan rates +0.5 percentage points": "Higher borrowing cost → lower buyer affordability → possible enquiry / conversion slowdown → slower absorption → pricing pressure on higher-ticket inventory.",
-                "Key metro opening delayed 12 months": "Longer commute expectations → weaker transit premium → possible buyer preference shift → slower absorption near affected corridors → repricing risk for projects relying on that access claim.",
-                "Construction material costs +10%": "Higher build input costs → tighter project margin or higher launch pricing → potential launch deferral / lower new supply → pressure on buyer affordability and future resale competition.",
-            }
-            st.markdown("**Supervisor impact chain**")
-            st.info(f"**{scenario}**\n\n{chain_by_scenario[scenario]}\n\n**Area lock:** {locked_row['name']} · **Signals used:** PostgreSQL locality score, exact-match project count, MongoDB area market and infrastructure fields. **Scenario coefficients:** qualitative, synthetic `intelligence_demo`; no causal effect size or forecast is claimed.")
-            st.markdown("**Draft for human review**")
-            recommendation = "Verify live availability, the source and timestamp of pricing, project coordinates, and legal/approval documents before contacting buyers or changing launch prices."
-            st.write(recommendation)
-            r1, r2, r3 = st.columns([1, 1, 2])
-            if r1.button("Approve this draft", key="approve-area-agent-draft", type="primary"):
-                st.session_state["area_agent_review"] = "Approved · demo"
-                db.add(AuditLog(actor_id=user.id, action="intelligence_demo_approved", detail=f"area={locked_slug}; scenario={scenario}; recommendation=verification-first"))
-                db.commit()
-            if r2.button("Request revision", key="revise-area-agent-draft"):
-                st.session_state["area_agent_review"] = "Revision requested · demo"
-                db.add(AuditLog(actor_id=user.id, action="intelligence_demo_revision_requested", detail=f"area={locked_slug}; scenario={scenario}"))
-                db.commit()
-            r3.caption(f"Human review status: {st.session_state.get('area_agent_review', 'Pending review')} · approval records a demo audit event only.")
 
     if st.button("Record this map search", key="live-map-record-search"):
         add_event(db, user.id, "Map area searched", locality=str(center["name"]),
@@ -2419,7 +2470,7 @@ def show_source_catalog(market_slug: str | None = None):
         listing_event = st.dataframe(listing_display.reset_index(drop=True), width="stretch", hide_index=True, height=380,
                  alt="Active PropClue project listing records read from PostgreSQL",
                  on_select="rerun", selection_mode="single-row",
-                 selection_default={"rows": [0]}, key=f"live-listing-row-selection-{chosen_city_slug}-{listing_key_hash}")
+                 selection_default={"selection": {"rows": [0]}}, key=f"live-listing-row-selection-{chosen_city_slug}-{listing_key_hash}")
         selected_rows = listing_event.selection.rows if hasattr(listing_event, "selection") else []
         selected_row = selected_rows[0] if selected_rows else 0
         selected_id = int(display_listings.reset_index(drop=True).iloc[selected_row]["id"])
