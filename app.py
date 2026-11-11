@@ -31,7 +31,7 @@ from database import (
     Project, ProjectComparison, ProjectEvidence, ProjectInventory, SavedProperty,
     SessionLocal, User, init_db, reset_demo_data, score_from_events,
 )
-from source_data import clear_source_cache, load_area_dna, load_catalog
+from source_data import clear_source_cache, load_area_dna, load_builder_directory, load_catalog
 
 
 st.set_page_config(page_title="PropClue | Real estate intelligence", page_icon="⌂", layout="wide",
@@ -513,10 +513,8 @@ def login_screen(db):
     st.caption("Demo accounts with the live PropClue project and locality catalogue")
     left, right = st.columns([1.0, 1.0], gap="large")
     with left:
-        st.markdown("### One place to research, compare and ask")
-        st.write("Explore active PropClue projects and locality intelligence from the connected product databases.")
-        st.markdown("**Buyer workspace**")
-        st.write("Market overview · Explore properties · Compare and save · Ask PropClue")
+        st.markdown("### Your property research workspace")
+        st.write("Review live project listings, explore areas on the map, and keep a focused shortlist.")
         st.caption("Source records can be estimated or unverified. The demo does not independently confirm legal, title, tax, bank, price, or availability claims.")
     with right:
         with st.container(border=True):
@@ -941,7 +939,7 @@ def make_hsr_zoomin_demo(center_lat: float, center_lon: float) -> pd.DataFrame:
             "yoy_pct": round(-2 + ((index * 11) % 180) / 10, 1),
             "polygon": parcel,
             "building_polygon": building,
-            "fill_color": [13, 148 + ((index * 7) % 70), 136, 85],
+            "fill_color": [20, 184, 166, 105] if land_uses[index % len(land_uses)] == "Residential" else ([249, 115, 22, 105] if land_uses[index % len(land_uses)] == "Mixed use" else [37, 99, 235, 105]),
             "latitude": lat,
             "longitude": lon,
             "distance_display": "Synthetic HSR Layout mock geometry",
@@ -958,7 +956,7 @@ def hsr_demo_figure(parcels: pd.DataFrame, center_lat: float, center_lon: float,
     from math import cos, radians
     lon_scale = 111_320 * cos(radians(center_lat))
     lat_scale = 111_320
-    palette = {"Residential": "#5eead4", "Mixed use": "#2dd4bf", "Commercial": "#0f766e"}
+    palette = {"Residential": "#14b8a6", "Mixed use": "#f97316", "Commercial": "#2563eb"}
     fig = go.Figure()
     for row in parcels.itertuples(index=False):
         x = [(point[0] - center_lon) * lon_scale for point in row.polygon]
@@ -1267,7 +1265,7 @@ def show_map(db, user: User, city: str, show_header: bool = True):
             st.plotly_chart(hsr_fig, width="stretch", key="hsr-zoomedin-demo-map-v2",
                             config={"displayModeBar": True, "scrollZoom": True},
                             alt="Zoomable HSR synthetic building-block map with hover details for each sample parcel")
-            st.caption("Each parcel is a generated polygon; the smaller gold inset is a sample building footprint. Hover for asking price, floors, units, absorption and trend. Drag to zoom and use the toolbar to reset.")
+            st.caption("Land use colors: residential (teal), mixed use (orange), commercial (blue). Each parcel is a generated polygon; the smaller gold inset is a sample building footprint. Hover for asking price, floors, units, absorption and trend. Drag to zoom and use the toolbar to reset.")
     else:
         st.map(map_points, latitude="latitude", longitude="longitude", color="map_color", size="map_size",
                zoom=int(zoom), width="stretch", height=570,
@@ -2174,14 +2172,8 @@ def show_admin(db, user: User):
 
 
 def show_market_workspace(db, user: User, city: str):
-    top_header("Market overview", "Live PropClue catalogue and area intelligence from your local PostgreSQL and MongoDB databases.")
-    view = st.segmented_control("Market view", ["Live database", "Market pulse (demo)", "Market intelligence"], default="Live database", key="market-workspace-tab")
-    if view == "Market intelligence":
-        show_market(db, city, show_header=False, user_role=user.role)
-    elif view == "Market pulse (demo)":
-        show_overview(db, user, city, show_header=False)
-    else:
-        show_source_catalog(st.session_state.get("market_slug"))
+    top_header("Market overview · Live data", "Browse the connected PropClue project catalogue and linked locality intelligence in one place.")
+    show_source_catalog(st.session_state.get("market_slug"))
 
 
 def show_market(db, city: str, show_header: bool = True, user_role: str = "buyer"):
@@ -2260,17 +2252,11 @@ def show_market(db, city: str, show_header: bool = True, user_role: str = "buyer
         st.caption("Causal impact modeling remains a labeled prototype. Verified rate, material-cost, and infrastructure time series are not connected.")
 
 
-def show_property_workspace(db, user: User, city: str):
-    top_header("Explore properties", "Use Map Explorer for live locality coverage and HSR zoom-in demo; compare and save properties here.")
-    view = st.segmented_control("Property view", ["Map explorer", "Compare & save (demo)", "My requests (demo)"], default="Map explorer", key="property-workspace-tab")
-    if view == "Map explorer":
-        show_map(db, user, city, show_header=False)
-    elif view == "Compare & save (demo)":
-        show_saved(db, user, show_header=False)
-    elif view == "My requests (demo)":
+def show_compare_workspace(db, user: User):
+    top_header("Compare & save", "Keep a shortlist, compare projects side by side, and follow your enquiries from one place.")
+    show_saved(db, user, show_header=False)
+    with st.expander("My enquiries and visits", expanded=False):
         show_buyer_requests(db, user)
-    else:
-        show_map(db, user, city, show_header=False)
 
 
 def show_locality_intelligence(localities: pd.DataFrame, listings: pd.DataFrame, market_slug: str,
@@ -2391,10 +2377,133 @@ def show_locality_intelligence(localities: pd.DataFrame, listings: pd.DataFrame,
             st.dataframe(nearby[["name", "distance_km", "Project records", "composite_score"]].rename(columns={"name":"Locality", "distance_km":"Centroid distance km", "composite_score":"Score / 10"}), width="stretch", hide_index=True, alt="Nearby distinct localities with exact matched active project counts")
 
 
+def _builder_key(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _google_places_builder_signal(builder_name: str, city_name: str, api_key: str) -> dict | None:
+    """Fetch a one-time Google Places candidate/rating; results are not cached or persisted."""
+    response = requests.post(
+        "https://places.googleapis.com/v1/places:searchText",
+        headers={
+            "X-Goog-Api-Key": api_key,
+            "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.googleMapsUri,places.attributions",
+            "Content-Type": "application/json",
+        },
+        json={"textQuery": f"{builder_name} real estate developer {city_name}, India", "maxResultCount": 5, "languageCode": "en", "regionCode": "IN"},
+        timeout=12,
+    )
+    if response.status_code != 200:
+        raise ValueError(f"Google Places returned HTTP {response.status_code}.")
+    results = response.json().get("places", [])
+    if not results:
+        return None
+    exact = [place for place in results if _builder_key(place.get("displayName", {}).get("text", "")) == _builder_key(builder_name)]
+    return (exact or results)[0]
+
+
+def show_builder_score_panel(city_listings: pd.DataFrame, listing: pd.Series, city_slug: str):
+    builder = str(listing.get("builder_name") or "").strip()
+    st.markdown("#### Builder score · available evidence")
+    if not builder:
+        st.info("This project record has no builder name to evaluate.")
+        return
+
+    builder_rows = city_listings[city_listings["builder_name"].fillna("").map(_builder_key) == _builder_key(builder)].copy()
+    statuses = builder_rows["construction_status"].fillna("").astype(str).str.casefold().str.replace(r"[^a-z]", "", regex=True)
+    completed = int(statuses.isin(["completed", "readytomove", "readyforpossession"]).sum())
+    pipeline = int(statuses.isin(["underconstruction", "newlaunch", "upcoming", "prelaunch"]).sum())
+    rera = builder_rows["rera_number"].fillna("").astype(str).str.strip().ne("")
+    rera_coverage = float(rera.mean() * 100) if len(builder_rows) else None
+
+    try:
+        directory = load_builder_directory(city_slug)
+    except Exception:
+        directory = pd.DataFrame()
+    directory_match = directory[directory.get("builder_name", pd.Series(dtype=str)).fillna("").map(_builder_key) == _builder_key(builder)] if not directory.empty else pd.DataFrame()
+    verified_rank = None
+    if not directory_match.empty:
+        candidate = directory_match.iloc[0]
+        confidence = str(candidate.get("data_confidence") or "").casefold()
+        if confidence == "web_verified" and pd.notna(candidate.get("rank")):
+            verified_rank = int(candidate["rank"])
+
+    api_key = private_setting("GOOGLE_PLACES_API_KEY")
+    google_place = None
+    google_error = None
+    if api_key and st.button("Fetch live Google rating", key=f"google-builder-rating-{listing.get('id', builder)}"):
+        try:
+            market_name = str(listing.get("city_slug") or city_slug)
+            market_name = "Bengaluru" if market_name == "bangalore" else market_name.replace("-", " ").title()
+            google_place = _google_places_builder_signal(builder, market_name, api_key)
+        except Exception as exc:
+            google_error = type(exc).__name__
+
+    all_completed = city_listings["construction_status"].fillna("").astype(str).str.casefold().str.replace(r"[^a-z]", "", regex=True).isin(["completed", "readytomove", "readyforpossession"])
+    completed_counts = city_listings.assign(_builder=city_listings["builder_name"].fillna("").map(_builder_key), _complete=all_completed).groupby("_builder")["_complete"].sum()
+    city_max = int(completed_counts.max()) if not completed_counts.empty else 0
+    components: list[tuple[str, float, int]] = []
+    if len(builder_rows):
+        components.append(("Observed completed catalogue records", (completed / city_max * 100) if city_max else 0.0, 30))
+        components.append(("RERA reference coverage", rera_coverage or 0.0, 20))
+    if verified_rank is not None and not directory.empty:
+        ranks = pd.to_numeric(directory["rank"], errors="coerce").dropna()
+        max_rank = max(1, int(ranks.max())) if not ranks.empty else 1
+        components.append(("City directory rank signal", max(0.0, (max_rank - verified_rank + 1) / max_rank * 100), 15))
+    google_exact = False
+    if google_place:
+        place_name_for_match = google_place.get("displayName", {}).get("text", "")
+        google_exact = _builder_key(place_name_for_match) == _builder_key(builder)
+        if google_exact and google_place.get("rating") is not None:
+            components.append(("Google Maps average rating", float(google_place["rating"]) / 5 * 100, 35))
+
+    score = round(sum(value * weight for _, value, weight in components) / sum(weight for _, _, weight in components)) if components else None
+    coverage = sum(weight for _, _, weight in components)
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("Evidence score", f"{score}/100" if score is not None else "Not enough data", border=True, help="Weighted available-evidence index. It is not a verified builder-quality or investment rating.")
+    metric_cols[1].metric("Completed records", str(completed), border=True, help="Completed/ready-to-move records currently present in this live active catalogue, not the builder's lifetime total.")
+    metric_cols[2].metric("Current / upcoming", str(pipeline), border=True, help="Under-construction, new-launch, upcoming, or pre-launch records in the connected catalogue.")
+    metric_cols[3].metric("Evidence coverage", f"{coverage}%", border=True, help="Share of possible component weight with a source value available. Google ratings add coverage only when an exact name match is returned.")
+    if components:
+        detail = pd.DataFrame([{"Signal": name, "Value": f"{value:.0f}/100", "Weight": f"{weight}%"} for name, value, weight in components])
+        st.dataframe(detail, width="stretch", hide_index=True, alt="Transparent components and weights for the available builder evidence score")
+    st.caption(f"Observed listing records for this builder: {len(builder_rows)} · RERA IDs present: {int(rera.sum())}/{len(builder_rows)} · completed project sqft: not available in the connected schema.")
+    st.caption("Coverage is limited to the currently connected catalogue. Listing status, RERA reference presence, and directory rank are not independent legal or delivery verification; no lifetime project or area claim is inferred.")
+
+    if not api_key:
+        st.info("Google review rating is not connected. Add GOOGLE_PLACES_API_KEY in Streamlit Cloud Secrets or the local environment to fetch a live rating on demand.")
+        st.caption("Before enabling Google Places for public use, publish Terms of Use and a Privacy Policy that incorporate Google Maps Platform requirements.")
+    else:
+        st.caption("Fetching Google Places data can incur Google Maps Platform charges. Select the button above to make a one-time live request.")
+    if google_error:
+        st.error("Could not retrieve Google Places data.")
+        st.caption(f"Connection error type: {google_error}.")
+    elif google_place:
+        place_name = google_place.get("displayName", {}).get("text", "Candidate")
+        st.write(f"**Google Maps candidate:** {place_name} · {google_place.get('formattedAddress', 'address unavailable')}")
+        rating = google_place.get("rating")
+        review_count = google_place.get("userRatingCount")
+        if rating is not None:
+            st.metric("Google review signal", f"{float(rating):.1f}/5" + (f" · {int(review_count):,} ratings" if review_count is not None else ""), border=True)
+            if google_exact:
+                st.caption("Exact-name Google rating is included in the score for this view only. Google data is fetched live and not persisted.")
+            else:
+                st.warning("The Google candidate name differs from the project builder name. Its rating is shown separately and excluded from the score; verify the company identity before use.")
+        else:
+            st.info("This Google Maps candidate has no rating data.")
+        if google_place.get("googleMapsUri"):
+            st.link_button("Open Google Maps listing", google_place["googleMapsUri"])
+        for attribution in google_place.get("attributions", []):
+            attribution_name = attribution.get("provider", "Google Maps data provider")
+            attribution_url = attribution.get("providerUri")
+            st.caption(f"Google Maps attribution: {attribution_name}" + (f" · {attribution_url}" if attribution_url else ""))
+        st.caption("Google Maps · rating and rating count fetched live for this view. Data is not stored. Verify the profile match before use.")
+
+
 def show_source_catalog(market_slug: str | None = None):
     """Read-only live view of the real PropClue PostgreSQL and MongoDB stores."""
-    st.subheader("Live PropClue data")
-    st.caption("PostgreSQL supplies active projects and published locality records. MongoDB supplies the matching area DNA document. This view reads the local product databases directly and does not modify them.")
+    st.subheader("Project listings and locality intelligence")
+    st.caption("Live PropClue catalogue from PostgreSQL, with linked locality intelligence from MongoDB. This view is read-only.")
     refresh_col, _ = st.columns([1, 5])
     if refresh_col.button("Refresh source data", icon=":material/refresh:"):
         clear_source_cache()
@@ -2495,6 +2604,7 @@ def show_source_catalog(market_slug: str | None = None):
                 url = listing.get(field)
                 if isinstance(url, str) and url.startswith("https://"):
                     col.link_button(label, url, width="stretch")
+            show_builder_score_panel(city_listings, listing, chosen_city_slug)
 
     st.markdown("#### Locality intelligence · linked to selected project")
     preferred_slug = str(listing["locality_match_slug"]) if listing is not None and pd.notna(listing.get("locality_match_slug")) else None
@@ -2520,8 +2630,9 @@ def main():
             st.markdown("---")
         page_groups = {
             "buyer": [
-                st.Page(lambda: show_market_workspace(db, user, city), title="Market overview", url_path="market-overview", icon=":material/monitoring:"),
-                st.Page(lambda: show_property_workspace(db, user, city), title="Explore properties", url_path="explore-properties", icon=":material/map:"),
+                st.Page(lambda: show_market_workspace(db, user, city), title="Market overview · Live data", url_path="market-overview", icon=":material/monitoring:"),
+                st.Page(lambda: show_map(db, user, city), title="Map explorer", url_path="map-explorer", icon=":material/map:"),
+                st.Page(lambda: show_compare_workspace(db, user), title="Compare & save", url_path="compare-save", icon=":material/bookmark:"),
             ],
             "builder": [
                 st.Page(lambda: show_builder_portfolio(db, user, city), title="Portfolio MIS", url_path="portfolio-overview", icon=":material/monitoring:"),

@@ -117,6 +117,24 @@ def load_catalog() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 @st.cache_data(ttl=120)
+def load_builder_directory(city_slug: str) -> pd.DataFrame:
+    """Read builder directory context for one market; no profile data is written."""
+    engine = _pg_engine(_pg_url())
+    with engine.connect() as connection:
+        try:
+            return pd.read_sql(text("""
+                SELECT rank, builder_name, founded_year, segment, notable_projects,
+                       presence_note, website, data_confidence, city_slug
+                FROM public.top_builders
+                WHERE city_slug = :city_slug
+                ORDER BY rank, builder_name
+            """), connection, params={"city_slug": city_slug})
+        except Exception:
+            # Some connected PropClue deployments do not yet publish this optional table.
+            return pd.DataFrame(columns=["rank", "builder_name", "founded_year", "segment", "notable_projects", "presence_note", "website", "data_confidence", "city_slug"])
+
+
+@st.cache_data(ttl=120)
 def load_area_dna(slug: str, mongodb_id: str = "") -> dict[str, Any] | None:
     uri = _secret_or_env("PROPCLUE_SOURCE_MONGODB_URI", "mongodb://localhost:27017/propcluev1")
     client = _mongo_client(uri)
@@ -140,3 +158,4 @@ def load_area_dna(slug: str, mongodb_id: str = "") -> dict[str, Any] | None:
 def clear_source_cache() -> None:
     _load_catalog_rows.clear()
     load_area_dna.clear()
+    load_builder_directory.clear()
