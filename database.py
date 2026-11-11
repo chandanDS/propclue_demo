@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,26 @@ engine = create_engine(
     pool_pre_ping=True,
 )
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def configure_temporary_fallback() -> str:
+    """Switch the demo workflow store to a writable local SQLite file.
+
+    Used only when the configured Cloud database cannot be reached. This is
+    intentionally ephemeral and must be surfaced to users by the UI.
+    """
+    global DB_URL, engine
+    fallback_path = Path(tempfile.gettempdir()) / "propclue_demo_fallback.db"
+    fallback_url = f"sqlite:///{fallback_path.as_posix()}"
+    engine.dispose()
+    engine = create_engine(
+        fallback_url,
+        connect_args={"check_same_thread": False},
+        pool_pre_ping=True,
+    )
+    SessionLocal.configure(bind=engine)
+    DB_URL = fallback_url
+    return str(fallback_path)
 
 
 class Builder(Base):

@@ -16,7 +16,7 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 from sqlalchemy import select, func
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 # Streamlit Cloud secrets are exposed before database.py creates its engine.
 try:
@@ -25,11 +25,12 @@ try:
 except Exception:
     pass
 
+import database as database_module
 from database import (
     AIConversation, AIMessage, AuditLog, Builder, Campaign, ConsentRecord, DataSource,
     ChannelPartnerProfile, Event, Lead, LeadActivity, Locality, MarketObservation,
     Project, ProjectComparison, ProjectEvidence, ProjectInventory, SavedProperty,
-    SessionLocal, User, init_db, reset_demo_data, score_from_events,
+    SessionLocal, User, configure_temporary_fallback, init_db, reset_demo_data, score_from_events,
 )
 from source_data import clear_source_cache, load_area_dna, load_catalog
 try:
@@ -45,10 +46,27 @@ st.set_page_config(page_title="PropClue | Real estate intelligence", page_icon="
                    initial_sidebar_state="expanded")
 
 
+DATABASE_FALLBACK_NOTICE = ""
+
+
 def boot_database() -> bool:
+    global DATABASE_FALLBACK_NOTICE
     # Re-run create_all on every Streamlit rerun so an existing local/cloud DB
     # picks up newly added tables without requiring a manual reset.
-    init_db()
+    try:
+        init_db()
+    except OperationalError:
+        # Streamlit Cloud may have a missing, sleeping, or temporarily
+        # unreachable DATABASE_URL. Keep the demo usable while making the
+        # non-persistent fallback explicit.
+        if "propclue_demo_fallback.db" in database_module.DB_URL:
+            raise
+        configure_temporary_fallback()
+        init_db()
+        DATABASE_FALLBACK_NOTICE = (
+            "The configured demo database is temporarily unavailable. "
+            "This session is using temporary demo storage; changes may not persist."
+        )
     return True
 
 
@@ -2841,6 +2859,8 @@ def main():
         with st.sidebar:
             brand_lockup(compact=True)
             st.caption(f"{user.name} · {user.role.title()}")
+            if DATABASE_FALLBACK_NOTICE:
+                st.warning(DATABASE_FALLBACK_NOTICE, icon=":material/cloud_off:")
             city = get_city_filter(db, user)
             if st.button("Sign out", width="stretch"):
                 st.session_state.pop("user_id", None)
