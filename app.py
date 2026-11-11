@@ -31,7 +31,14 @@ from database import (
     Project, ProjectComparison, ProjectEvidence, ProjectInventory, SavedProperty,
     SessionLocal, User, init_db, reset_demo_data, score_from_events,
 )
-from source_data import clear_source_cache, load_area_dna, load_builder_directory, load_catalog
+from source_data import clear_source_cache, load_area_dna, load_catalog
+try:
+    from source_data import load_builder_directory
+except ImportError:
+    # Keep older Streamlit workers running during a hot reload after this
+    # optional directory query was added. A restart loads the full function.
+    def load_builder_directory(city_slug: str) -> pd.DataFrame:
+        return pd.DataFrame(columns=["rank", "builder_name", "data_confidence", "city_slug"])
 
 
 st.set_page_config(page_title="PropClue | Real estate intelligence", page_icon="⌂", layout="wide",
@@ -233,6 +240,194 @@ export default function (component) {
     grid.append(card)
   }
   return () => timers.forEach(clearTimeout)
+}
+""",
+)
+
+
+_MARKET_PULSE_COMPONENT = st.components.v2.component(
+    "propclue_market_pulse_clock",
+    html="""
+<section class="pc-pulse" aria-label="PropClue live market pulse">
+  <div class="pc-pulse-head">
+    <div><div class="pc-eyebrow">PROPCLUE / MARKET SIGNALS</div><div class="pc-pulse-title">Market pulse</div></div>
+    <div class="pc-live"><span class="pc-live-dot"></span> LIVE CLOCK · SOURCE SNAPSHOT</div>
+  </div>
+  <div class="pc-pulse-body">
+    <div class="pc-dial-wrap">
+      <svg class="pc-dial" viewBox="0 0 360 360" role="img" aria-label="Live moving clock dial for market indicators">
+        <circle class="pc-ring pc-ring-outer" cx="180" cy="180" r="158" />
+        <circle class="pc-ring pc-ring-inner" cx="180" cy="180" r="111" />
+        <g class="pc-ticks"></g><g class="pc-sector-labels"></g>
+        <line class="pc-hand-shadow" x1="180" y1="192" x2="180" y2="57" />
+        <line class="pc-hand" x1="180" y1="192" x2="180" y2="57" />
+        <line class="pc-hand-tail" x1="180" y1="192" x2="180" y2="220" />
+        <circle class="pc-hub" cx="180" cy="180" r="12" />
+        <circle class="pc-hub-core" cx="180" cy="180" r="4" />
+        <text class="pc-clock-time" x="180" y="248" text-anchor="middle">--:--:--</text>
+        <text class="pc-clock-label" x="180" y="266" text-anchor="middle">MARKET CLOCK · IST</text>
+      </svg>
+      <div class="pc-dial-foot"><span>Asia/Kolkata</span><span class="pc-foot-dot"></span><span>Clock ticks continuously</span></div>
+    </div>
+    <div class="pc-signals">
+      <div class="pc-signal-intro"><span>CONNECTED CATALOGUE SNAPSHOT</span><span class="pc-snapshot"></span></div>
+      <div class="pc-kpis"></div>
+      <div class="pc-secondary"></div>
+      <div class="pc-source-note"><span class="pc-source-icon">⌁</span><span>Connected PropClue PostgreSQL catalogue · figures reflect stored listing records, not verified transactions or available inventory. Refresh the source view to reload data.</span></div>
+    </div>
+  </div>
+</section>
+""",
+    css="""
+.pc-pulse { box-sizing: border-box; width: 100%; overflow: hidden; color: #eff8ff; border: 1px solid #234356; border-radius: 24px; padding: 1.25rem 1.4rem 1.15rem; background: radial-gradient(ellipse at 22% 46%, rgba(13,148,136,.18), transparent 38%), radial-gradient(ellipse at 86% 8%, rgba(42,91,125,.18), transparent 36%), linear-gradient(125deg,#081b2c 0%,#0c2638 54%,#102b3a 100%); box-shadow: 0 24px 55px rgba(7,30,48,.18), inset 0 1px 0 rgba(255,255,255,.06); font-family: Inter,ui-sans-serif,system-ui,sans-serif; }
+.pc-pulse * { box-sizing: border-box; }
+.pc-pulse-head { display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:0 .15rem 1rem; border-bottom:1px solid rgba(177,210,226,.12); }
+.pc-eyebrow { font-size:.65rem; letter-spacing:.19em; font-weight:700; color:#66d7cc; }
+.pc-pulse-title { margin-top:.28rem; font-size:1.32rem; letter-spacing:-.035em; font-weight:690; color:#f4f9fd; }
+.pc-live { display:flex; align-items:center; gap:.5rem; border:1px solid rgba(95,227,179,.22); border-radius:99px; padding:.42rem .72rem; color:#a7efd3; background:rgba(11,84,78,.24); font-size:.61rem; font-weight:700; letter-spacing:.11em; white-space:nowrap; }
+.pc-live-dot,.pc-foot-dot { width:7px; height:7px; border-radius:50%; background:#5fe3b3; box-shadow:0 0 0 4px rgba(95,227,179,.12),0 0 13px rgba(95,227,179,.7); }
+.pc-pulse-body { display:grid; grid-template-columns:minmax(260px, .94fr) minmax(420px,1.4fr); gap:1.25rem; align-items:center; padding:.9rem .25rem .15rem; }
+.pc-dial-wrap { min-width:0; display:flex; align-items:center; flex-direction:column; }
+.pc-dial { display:block; width:min(100%,370px); height:auto; overflow:visible; }
+.pc-ring { fill:none; stroke:rgba(198,223,235,.17); stroke-width:1; }
+.pc-ring-inner { stroke:rgba(198,223,235,.29); stroke-dasharray:2 7; }
+.pc-tick { stroke:rgba(225,240,247,.42); stroke-width:1.2; stroke-linecap:round; }
+.pc-tick-major { stroke:#86b9c3; stroke-width:2; }
+.pc-sector-label { fill:#abc5d1; font-size:8.7px; letter-spacing:.15em; font-weight:700; text-anchor:middle; dominant-baseline:middle; }
+.pc-sector-dot { fill:#ff7b78; filter:drop-shadow(0 0 4px rgba(255,123,120,.8)); }
+.pc-hand-shadow { stroke:rgba(0,0,0,.55); stroke-width:8; stroke-linecap:round; transform-origin:180px 180px; }
+.pc-hand { stroke:#ff777d; stroke-width:3.2; stroke-linecap:round; transform-origin:180px 180px; filter:drop-shadow(0 0 7px rgba(255,119,125,.6)); }
+.pc-hand-tail { stroke:#ff777d; stroke-width:2.5; stroke-linecap:round; transform-origin:180px 180px; }
+.pc-hub { fill:#183c4c; stroke:rgba(212,239,244,.26); stroke-width:1; }
+.pc-hub-core { fill:#ff777d; }
+.pc-clock-time { fill:#eff8ff; font-size:17px; font-weight:550; letter-spacing:.06em; font-variant-numeric:tabular-nums; }
+.pc-clock-label { fill:#7fa5b7; font-size:7px; font-weight:700; letter-spacing:.18em; }
+.pc-dial-foot { display:flex; align-items:center; justify-content:center; gap:.5rem; color:#82a4b3; font-size:.66rem; margin-top:-.35rem; text-align:center; }
+.pc-foot-dot { width:4px; height:4px; box-shadow:none; }
+.pc-signals { min-width:0; }
+.pc-signal-intro { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:.7rem; color:#7fa5b7; font-size:.61rem; font-weight:700; letter-spacing:.15em; }
+.pc-snapshot { color:#a8cad3; font-size:.68rem; letter-spacing:.02em; font-variant-numeric:tabular-nums; }
+.pc-kpis { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.65rem; }
+.pc-kpi { min-width:0; min-height:88px; padding:.78rem .85rem .7rem; border:1px solid rgba(175,210,226,.13); border-radius:15px; background:linear-gradient(145deg,rgba(255,255,255,.065),rgba(255,255,255,.025)); }
+.pc-kpi-label { display:flex; align-items:center; gap:.42rem; color:#91b1c1; font-size:.68rem; font-weight:600; }
+.pc-kpi-mark { width:6px; height:6px; border-radius:2px; background:#5fe3b3; }
+.pc-kpi-value { color:#f2f8fb; font-size:1.48rem; line-height:1.12; letter-spacing:-.045em; font-weight:650; margin-top:.42rem; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.pc-kpi-detail { color:#789aaa; font-size:.65rem; margin-top:.2rem; }
+.pc-secondary { display:flex; flex-wrap:wrap; gap:.46rem; margin-top:.72rem; }
+.pc-chip { display:flex; align-items:center; gap:.35rem; border:1px solid rgba(161,201,218,.14); border-radius:99px; padding:.38rem .58rem; background:rgba(255,255,255,.035); color:#b7ccd4; font-size:.67rem; }
+.pc-chip strong { color:#f0f7fa; font-weight:650; }
+.pc-chip-muted strong { color:#f8bfad; }
+.pc-source-note { display:flex; gap:.55rem; margin-top:.8rem; padding-top:.7rem; border-top:1px solid rgba(177,210,226,.12); color:#7696a6; font-size:.65rem; line-height:1.45; }
+.pc-source-icon { color:#66d7cc; font-size:1rem; line-height:1; }
+@media(max-width:760px) { .pc-pulse { border-radius:18px; padding:1rem .85rem; } .pc-pulse-body { grid-template-columns:1fr; gap:.6rem; padding-top:.65rem; } .pc-dial { width:min(84vw,330px); } .pc-pulse-head { align-items:flex-start; } .pc-live { font-size:.54rem; padding:.35rem .5rem; } .pc-pulse-title { font-size:1.18rem; } .pc-kpi { min-height:78px; padding:.68rem; } .pc-kpi-value { font-size:1.28rem; } .pc-signal-intro { align-items:flex-start; flex-direction:column; gap:.3rem; } }
+@media(prefers-reduced-motion:reduce) { .pc-live-dot { box-shadow:0 0 0 3px rgba(95,227,179,.12); } }
+""",
+    js="""
+export default function (component) {
+  const { data, parentElement } = component
+  const root = parentElement.querySelector('.pc-pulse')
+  if (!root) return
+  const kpis = parentElement.querySelector('.pc-kpis')
+  const secondary = parentElement.querySelector('.pc-secondary')
+  const timeNode = parentElement.querySelector('.pc-clock-time')
+  const snapshotNode = parentElement.querySelector('.pc-snapshot')
+  const ticks = parentElement.querySelector('.pc-ticks')
+  const labels = parentElement.querySelector('.pc-sector-labels')
+  if (!kpis || !secondary || !timeNode || !snapshotNode || !ticks || !labels) return
+
+  const ns = 'http://www.w3.org/2000/svg'
+  if (!ticks.childElementCount) {
+    for (let i = 0; i < 48; i++) {
+      const angle = (i / 48) * Math.PI * 2 - Math.PI / 2
+      const major = i % 8 === 0
+      const r1 = major ? 135 : 140
+      const r2 = 148
+      const line = document.createElementNS(ns, 'line')
+      line.setAttribute('x1', String(180 + Math.cos(angle) * r1))
+      line.setAttribute('y1', String(180 + Math.sin(angle) * r1))
+      line.setAttribute('x2', String(180 + Math.cos(angle) * r2))
+      line.setAttribute('y2', String(180 + Math.sin(angle) * r2))
+      line.setAttribute('class', major ? 'pc-tick pc-tick-major' : 'pc-tick')
+      ticks.append(line)
+    }
+    const names = ['PRODUCT','LOCATION','SUPPLY','DEMAND','PRICE','PROGRESS']
+    names.forEach((name, i) => {
+      const angle = (i / names.length) * Math.PI * 2 - Math.PI / 2
+      const x = 180 + Math.cos(angle) * 159
+      const y = 180 + Math.sin(angle) * 159
+      const text = document.createElementNS(ns, 'text')
+      text.setAttribute('x', String(x))
+      text.setAttribute('y', String(y))
+      text.setAttribute('class', 'pc-sector-label')
+      text.textContent = name
+      labels.append(text)
+      const dot = document.createElementNS(ns, 'circle')
+      dot.setAttribute('cx', String(180 + Math.cos(angle) * 158))
+      dot.setAttribute('cy', String(180 + Math.sin(angle) * 158))
+      dot.setAttribute('r', '2.1')
+      dot.setAttribute('class', 'pc-sector-dot')
+      labels.append(dot)
+    })
+  }
+
+  kpis.replaceChildren()
+  for (const item of (data?.kpis || [])) {
+    const card = document.createElement('div')
+    card.className = 'pc-kpi'
+    const label = document.createElement('div')
+    label.className = 'pc-kpi-label'
+    const mark = document.createElement('span')
+    mark.className = 'pc-kpi-mark'
+    const labelText = document.createElement('span')
+    labelText.textContent = item.label || ''
+    label.append(mark, labelText)
+    const value = document.createElement('div')
+    value.className = 'pc-kpi-value'
+    value.textContent = item.value || '—'
+    const detail = document.createElement('div')
+    detail.className = 'pc-kpi-detail'
+    detail.textContent = item.detail || ''
+    card.append(label, value, detail)
+    kpis.append(card)
+  }
+  secondary.replaceChildren()
+  for (const item of (data?.chips || [])) {
+    const chip = document.createElement('div')
+    chip.className = item.muted ? 'pc-chip pc-chip-muted' : 'pc-chip'
+    const label = document.createElement('span')
+    label.textContent = item.label || ''
+    const strong = document.createElement('strong')
+    strong.textContent = item.value || ''
+    chip.append(label, strong)
+    secondary.append(chip)
+  }
+
+  const formatTime = () => new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  }).format(new Date())
+  let frame = 0
+  const hand = parentElement.querySelector('.pc-hand')
+  const shadow = parentElement.querySelector('.pc-hand-shadow')
+  const tail = parentElement.querySelector('.pc-hand-tail')
+  let lastSecond = -1
+  const animate = (now) => {
+    const seconds = (Date.now() / 1000) % 60
+    const rotation = seconds * 6
+    const transform = `rotate(${rotation}deg)`
+    if (hand) hand.style.transform = transform
+    if (shadow) shadow.style.transform = transform
+    if (tail) tail.style.transform = transform
+    const second = Math.floor(seconds)
+    if (second !== lastSecond) {
+      lastSecond = second
+      timeNode.textContent = formatTime()
+      snapshotNode.textContent = `LOCAL CLOCK · ${formatTime()} IST`
+    }
+    frame = requestAnimationFrame(animate)
+  }
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) frame = requestAnimationFrame(animate)
+  else { timeNode.textContent = formatTime(); snapshotNode.textContent = `LOCAL CLOCK · ${formatTime()} IST` }
+  return () => cancelAnimationFrame(frame)
 }
 """,
 )
@@ -2176,6 +2371,33 @@ def show_market_workspace(db, user: User, city: str):
     show_source_catalog(st.session_state.get("market_slug"))
 
 
+def render_market_pulse(city_label: str, city_listings: pd.DataFrame, city_localities: pd.DataFrame) -> None:
+    """Render a live-source summary with a continuously moving local-time dial."""
+    status = city_listings["construction_status"].fillna("").astype(str).str.casefold().str.replace(r"[^a-z]", "", regex=True)
+    units = pd.to_numeric(city_listings["units"], errors="coerce")
+    rera_count = int(city_listings["rera_number"].fillna("").astype(str).str.strip().ne("").sum())
+    priced = int((city_listings["price_min"].notna() | city_listings["price_max"].notna()).sum())
+    under_construction = int(status.eq("underconstruction").sum())
+    latest = pd.to_datetime(city_listings["updated_at"], errors="coerce").max()
+    latest_text = latest.strftime("%d %b %Y") if pd.notna(latest) else "No update date stored"
+    component_data = {
+        "kpis": [
+            {"label": "Live project records", "value": f"{len(city_listings):,}", "detail": f"{city_label} catalogue"},
+            {"label": "Published localities", "value": f"{len(city_localities):,}", "detail": "Connected locality coverage"},
+            {"label": "Units stated", "value": f"{int(units.sum()):,}" if units.notna().any() else "Not provided", "detail": f"Across {int(units.notna().sum()):,} listing records"},
+            {"label": "RERA references", "value": f"{rera_count:,} / {len(city_listings):,}", "detail": "ID presence only; not verified"},
+        ],
+        "chips": [
+            {"label": "Price on file", "value": f"{priced:,}"},
+            {"label": "Under construction", "value": f"{under_construction:,}"},
+            {"label": "Live demand feed", "value": "Not connected", "muted": True},
+            {"label": "Verified sales", "value": "Not connected", "muted": True},
+            {"label": "Source updated", "value": latest_text},
+        ],
+    }
+    _MARKET_PULSE_COMPONENT(key=f"market-pulse-{re.sub(r'[^a-z0-9]+', '-', city_label.casefold())}", data=component_data)
+
+
 def show_market(db, city: str, show_header: bool = True, user_role: str = "buyer"):
     """Live locality intelligence view with bounded, explainable comparisons."""
     if show_header:
@@ -2536,12 +2758,8 @@ def show_source_catalog(market_slug: str | None = None):
     st.caption(f"Selected market: **{city_label}** · {chosen_city_slug}")
     if city_listings.empty:
         st.info("This market has published locality records but no active project listings in the connected PostgreSQL catalogue.")
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Active listings", f"{len(city_listings):,}", border=True)
-    m2.metric("Published localities", f"{len(city_localities):,}", border=True)
-    m3.metric("Listings with price", f"{int(city_listings['price_min'].notna().sum()):,}", border=True)
-    m4.metric("Listings with RERA ID", f"{int(city_listings['rera_number'].fillna('').str.strip().ne('').sum()):,}", border=True)
+    render_market_pulse(city_label, city_listings, city_localities)
+    st.markdown("")
 
     st.info("These are the records currently stored in your PropClue databases. A source row or a populated field does not by itself mean that a price, document, score, or availability has been independently verified.", icon=":material/info:")
     st.markdown("#### Project listings · PostgreSQL")
