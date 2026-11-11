@@ -31,7 +31,14 @@ def _pg_url() -> str:
 
 @st.cache_resource
 def _pg_engine(url: str):
-    return create_engine(url, pool_pre_ping=True, connect_args={"options": "-c default_transaction_read_only=on"})
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+        connect_args={
+            "options": "-c default_transaction_read_only=on",
+            "connect_timeout": 5,
+        },
+    )
 
 
 @st.cache_resource

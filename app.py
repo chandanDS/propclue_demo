@@ -269,7 +269,7 @@ _MARKET_PULSE_COMPONENT = st.components.v2.component(
 <section class="pc-pulse" aria-label="PropClue live market pulse">
   <div class="pc-pulse-head">
     <div><div class="pc-eyebrow">PROPCLUE / MARKET SIGNALS</div><div class="pc-pulse-title">Market pulse</div></div>
-    <div class="pc-live"><span class="pc-live-dot"></span> LIVE CLOCK · SOURCE SNAPSHOT</div>
+    <div class="pc-live"><span class="pc-live-dot"></span> CATALOGUE SNAPSHOT</div>
   </div>
   <div class="pc-pulse-body">
     <div class="pc-dial-wrap">
@@ -304,8 +304,8 @@ _MARKET_PULSE_COMPONENT = st.components.v2.component(
 .pc-pulse-title { margin-top:.28rem; font-size:1.32rem; letter-spacing:-.035em; font-weight:690; color:#f4f9fd; }
 .pc-live { display:flex; align-items:center; gap:.5rem; border:1px solid rgba(95,227,179,.22); border-radius:99px; padding:.42rem .72rem; color:#a7efd3; background:rgba(11,84,78,.24); font-size:.61rem; font-weight:700; letter-spacing:.11em; white-space:nowrap; }
 .pc-live-dot,.pc-foot-dot { width:7px; height:7px; border-radius:50%; background:#5fe3b3; box-shadow:0 0 0 4px rgba(95,227,179,.12),0 0 13px rgba(95,227,179,.7); }
-.pc-pulse-body { display:grid; grid-template-columns:minmax(260px, .94fr) minmax(420px,1.4fr); gap:1.25rem; align-items:center; padding:.9rem .25rem .15rem; }
-.pc-dial-wrap { min-width:0; display:flex; align-items:center; flex-direction:column; }
+.pc-pulse-body { display:grid; grid-template-columns:1fr; gap:1.25rem; align-items:center; padding:.9rem .25rem .15rem; }
+.pc-dial-wrap { min-width:0; display:none !important; align-items:center; flex-direction:column; }
 .pc-dial { display:block; width:min(100%,370px); height:auto; overflow:visible; }
 .pc-ring { fill:none; stroke:rgba(198,223,235,.17); stroke-width:1; }
 .pc-ring-inner { stroke:rgba(198,223,235,.29); stroke-dasharray:2 7; }
@@ -706,6 +706,7 @@ def current_user(db):
     return db.get(User, user_id) if user_id else None
 
 
+@st.cache_data(ttl=120)
 def live_market_labels() -> dict[str, str]:
     """Market selector options from cities present in the live PropClue data."""
     localities, listings = load_catalog()
@@ -718,6 +719,23 @@ def live_market_labels() -> dict[str, str]:
     if "bangalore" in labels:
         labels["bangalore"] = "Bengaluru"
     return labels
+
+
+def available_market_labels(db) -> tuple[dict[str, str], bool]:
+    """Use live market coverage when available, otherwise the seeded demo markets."""
+    try:
+        markets = live_market_labels()
+        if markets:
+            return markets, True
+    except Exception:
+        pass
+    demo_cities = db.scalars(select(Locality.city).distinct().order_by(Locality.city)).all()
+    slug_overrides = {"bengaluru": "bangalore", "bangalore": "bangalore", "delhi": "delhi"}
+    markets = {
+        slug_overrides.get(str(city).casefold(), re.sub(r"[^a-z0-9]+", "-", str(city).casefold()).strip("-")): str(city)
+        for city in demo_cities
+    }
+    return markets, False
 
 
 def login_screen(db):
@@ -735,7 +753,9 @@ def login_screen(db):
             st.caption("Demo sign-in accepts any password. Buyer and builder workflow records remain synthetic.")
             mode = st.segmented_control("Account access", ["Sign in", "Create account"], default="Sign in", key="login-mode")
             account_type = st.selectbox("Account type", ["Buyer", "Builder", "Channel partner"], key="login_account_type")
-            markets = live_market_labels()
+            markets, has_live_market_data = available_market_labels(db)
+            if not has_live_market_data:
+                st.info("Live PropClue market data is unreachable right now. Showing demo market choices until the source database is available.")
             if markets:
                 market_slugs = sorted(markets, key=lambda slug: markets[slug].casefold())
                 city_labels = {"Bengaluru" if slug == "bangalore" else markets[slug]: slug for slug in market_slugs}
@@ -845,13 +865,9 @@ def top_header(title: str, subtitle: str = ""):
 
 
 def get_city_filter(db, user: User) -> str:
-    try:
-        market_labels = live_market_labels()
-    except Exception:
-        st.warning("Live market options are unavailable because the PropClue source database could not be reached.")
-        st.session_state["market_slug"] = ""
-        return user.city
-
+    market_labels, has_live_market_data = available_market_labels(db)
+    if not has_live_market_data:
+        st.warning("Live PropClue source is unavailable. Showing demo markets; live listings will return when the source database is reachable.")
     markets = sorted(market_labels, key=lambda slug: market_labels[slug].casefold())
     if not markets:
         st.warning("No published markets were found in the PropClue source database.")
