@@ -1065,6 +1065,8 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     map_points["point_radius_m"] = map_points.apply(lambda row: 280 if row["slug"] == center_slug else min(650, 130 + 55 * int(row["matching_listings"])), axis=1)
     map_points["fill_color"] = map_points.apply(
         lambda row: [245, 158, 11, 235] if row["slug"] == center_slug else ([13, 148, 136, 220] if row["matching_listings"] > 0 else [100, 116, 139, 155]), axis=1)
+    map_points["map_color"] = map_points.apply(lambda row: "#f59e0b" if row["slug"] == center_slug else ("#0d9488" if row["matching_listings"] > 0 else "#94a3b8"), axis=1)
+    map_points["map_size"] = map_points["matching_listings"].map(lambda count: min(55, 18 + int(count) * 8)).astype(float)
     map_points["distance_display"] = map_points["distance_km"].map(lambda value: f"{value:.1f} km")
     map_points["detail"] = map_points.apply(
         lambda row: f"{row['distance_display']} from center · {row['matching_listings']} matched listings · locality score {float(row['composite_score']):.1f}/10" if pd.notna(row["composite_score"]) else f"{row['distance_display']} from center · {row['matching_listings']} matched listings · score not available",
@@ -1135,11 +1137,22 @@ def show_map(db, user: User, city: str, show_header: bool = True):
         map_style=os.environ.get("PROPCLUE_MAP_STYLE", "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"),
         tooltip={"html": "<b>{name}</b><br/>{detail}", "style": {"color": "white"}},
     )
-    map_event = st.pydeck_chart(
-        deck, width="stretch", height=570, key=f"live-map-{market_slug}-{center_slug}",
-        on_select="rerun", selection_mode="single-object",
-        alt=f"Live locality map for {center['city']} with a {radius_km} km search radius and matching listings",
-    )
+    if zoomedin_demo_mode:
+        map_event = st.pydeck_chart(
+            deck, width="stretch", height=570, key=f"live-map-{market_slug}-{center_slug}",
+            on_select="rerun", selection_mode="single-object",
+            alt=f"Synthetic HSR building map with a {radius_km} km radius search context",
+        )
+    else:
+        st.map(map_points, latitude="latitude", longitude="longitude", color="map_color", size="map_size",
+               zoom=int(zoom), width="stretch", height=570,
+               alt=f"Live locality map for {center['city']} with locality points inside a {radius_km} km radius")
+        st.caption(f"Map shows locality centroids within {radius_km} km of {center['name']}. The basemap follows Streamlit's built-in map style; no external tile style is required.")
+    radius_table = nearby.sort_values("distance_km").head(15).copy()
+    if not radius_table.empty:
+        radius_table["Project records"] = radius_table["slug"].map(listing_counts).fillna(0).astype(int)
+        st.markdown(f"**Radius coverage · nearest {len(radius_table)} locality records**")
+        st.dataframe(radius_table[["name", "distance_km", "Project records", "composite_score", "connectivity_score"]].rename(columns={"name":"Locality", "distance_km":"Distance km", "composite_score":"Area score / 10", "connectivity_score":"Connectivity / 10"}), width="stretch", hide_index=True, height=280, alt="Nearest locality scores and exact matched project counts inside the radius search")
     clicked_slug = None
     clicked_demo_parcel = None
     try:
@@ -2209,7 +2222,8 @@ def show_property_workspace(db, user: User, city: str):
         show_map(db, user, city, show_header=False)
 
 
-def show_locality_intelligence(localities: pd.DataFrame, listings: pd.DataFrame, market_slug: str) -> None:
+def show_locality_intelligence(localities: pd.DataFrame, listings: pd.DataFrame, market_slug: str,
+                              preferred_slug: str | None = None, selected_project: str | None = None) -> None:
     """Visible market-overview map and area signals, placed before the long listings table."""
     st.markdown("#### Locality intelligence · map and area signals")
     st.caption("Select an area to see its database scores, infrastructure, market indicators, and nearby project records. A zero project match means no exact catalogue join; it does not mean the locality has no property market.")
@@ -2219,8 +2233,10 @@ def show_locality_intelligence(localities: pd.DataFrame, listings: pd.DataFrame,
         return
     counts = listings["locality_match_slug"].dropna().value_counts().to_dict()
     areas["Project records"] = areas["slug"].map(counts).fillna(0).astype(int)
-    preferred = areas.sort_values(["Project records", "composite_score"], ascending=[False, False]).iloc[0]["slug"]
     slugs = areas["slug"].astype(str).tolist()
+    preferred = preferred_slug if preferred_slug in slugs else areas.sort_values(["Project records", "composite_score"], ascending=[False, False]).iloc[0]["slug"]
+    if selected_project and preferred_slug not in slugs:
+        st.warning(f"{selected_project} has no unique published-locality match for its source slug. Choose a locality below to view area context; it will not be labeled as the project's locality.")
     selected = st.selectbox("Focus locality", slugs, index=slugs.index(preferred),
         format_func=lambda slug: str(areas.loc[areas["slug"] == slug, "name"].iloc[0]),
         key=f"overview-locality-{market_slug}")
@@ -2250,20 +2266,15 @@ def show_locality_intelligence(localities: pd.DataFrame, listings: pd.DataFrame,
             radius = st.slider("Nearby locality radius", 2, 30, 10, key=f"overview-locality-radius-{market_slug}")
             shown = coords[coords["distance_km"] <= radius].copy()
             shown["Project records"] = shown["slug"].map(counts).fillna(0).astype(int)
-            shown["radius_m"] = shown["Project records"].map(lambda count: min(700, 140 + int(count) * 65))
-            shown["fill_color"] = shown.apply(lambda row: [245, 158, 11, 245] if row["slug"] == selected else ([13, 148, 136, 225] if row["Project records"] else [100, 116, 139, 155]), axis=1)
+            shown["map_size"] = shown["Project records"].map(lambda count: min(55, 18 + int(count) * 8)).astype(float)
+            shown["map_color"] = shown.apply(lambda row: "#f59e0b" if row["slug"] == selected else ("#0d9488" if row["Project records"] else "#94a3b8"), axis=1)
             shown["hover_text"] = shown.apply(lambda row: f"{int(row['Project records'])} exactly matched active projects · composite score {float(row['composite_score']):.1f}/10" if pd.notna(row["composite_score"]) else f"{int(row['Project records'])} exactly matched active projects · score not available", axis=1)
-            view_lat = float(area["latitude"])
-            view_lon = float(area["longitude"])
-            deck = pdk.Deck(layers=[pdk.Layer("ScatterplotLayer", id="overview-locality-pins", data=shown,
-                get_position="[longitude, latitude]", get_radius="radius_m", radius_units="meters",
-                get_fill_color="fill_color", get_line_color="[255,255,255,235]", line_width_min_pixels=2,
-                stroked=True, filled=True, pickable=True, auto_highlight=True)],
-                initial_view_state=pdk.ViewState(latitude=view_lat, longitude=view_lon, zoom=11.5),
-                map_style=os.environ.get("PROPCLUE_MAP_STYLE", "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"),
-                tooltip={"html":"<b>{name}</b><br/>{hover_text}", "style":{"color":"white"}})
-            st.pydeck_chart(deck, width="stretch", height=490, key=f"overview-locality-map-{market_slug}-{selected}", alt=f"Locality intelligence map centered on {area['name']}; pin size shows matched listing count")
-            st.caption("🟠 selected locality　🟢 active project records　⚪ no exact project match. Pin size reflects catalogue count. Distance is centroid-to-centroid, not road distance.")
+            st.map(shown, latitude="latitude", longitude="longitude", color="map_color", size="map_size",
+                   zoom=11, width="stretch", height=490,
+                   alt=f"Locality intelligence map centered on {area['name']}; pin size shows matched listing count")
+            st.caption("Selected locality is orange; areas with matching projects are teal; other locality centroids are grey. Pin size shows matched project count. Radius uses centroid distance, not road distance.")
+            nearby_view = shown.sort_values("distance_km").head(12)
+            st.dataframe(nearby_view[["name", "distance_km", "Project records", "composite_score", "connectivity_score"]].rename(columns={"name":"Locality", "distance_km":"Distance km", "Project records":"Matched projects", "composite_score":"Area score / 10", "connectivity_score":"Connectivity / 10"}), width="stretch", hide_index=True, height=260, alt="Nearest localities and score details represented on the radius map")
         else:
             st.warning("This market has no stored locality coordinates, so the map cannot be drawn.")
     with right:
@@ -2373,7 +2384,6 @@ def show_source_catalog(market_slug: str | None = None):
     m4.metric("Listings with RERA ID", f"{int(city_listings['rera_number'].fillna('').str.strip().ne('').sum()):,}", border=True)
 
     st.info("These are the records currently stored in your PropClue databases. A source row or a populated field does not by itself mean that a price, document, score, or availability has been independently verified.", icon=":material/info:")
-    show_locality_intelligence(city_localities, city_listings, chosen_city_slug)
     st.markdown("#### Project listings · PostgreSQL")
     search = st.text_input("Search project, builder or locality", placeholder="Try a project or builder name", key="source-listing-search")
     if search.strip():
@@ -2401,23 +2411,25 @@ def show_source_catalog(market_slug: str | None = None):
         "units": "Units stated", "construction_status": "Construction status", "possession_date": "Possession stated",
         "source": "Source", "data_confidence": "Source confidence",
     })
-    listing_event = st.dataframe(listing_display.reset_index(drop=True), width="stretch", hide_index=True, height=380,
-                 alt="Active PropClue project listing records read from PostgreSQL",
-                 on_select="rerun", selection_mode="single-row", key="live-listing-row-selection")
-    st.caption(f"Showing {len(display_listings):,} active database rows. Blank source fields are shown as missing; no unit area or per-square-foot price is inferred.")
+    listing_key_hash = hashlib.sha1("|".join(display_listings["id"].astype(str)).encode("utf-8")).hexdigest()[:10]
+    listing_event = None
+    selected_id = None
+    listing = None
     if not display_listings.empty:
+        listing_event = st.dataframe(listing_display.reset_index(drop=True), width="stretch", hide_index=True, height=380,
+                 alt="Active PropClue project listing records read from PostgreSQL",
+                 on_select="rerun", selection_mode="single-row",
+                 selection_default={"rows": [0]}, key=f"live-listing-row-selection-{chosen_city_slug}-{listing_key_hash}")
         selected_rows = listing_event.selection.rows if hasattr(listing_event, "selection") else []
-        if not selected_rows:
-            st.caption("Click a project row to open its details below.")
-            selected_id = None
-        else:
-            selected_id = int(display_listings.reset_index(drop=True).iloc[selected_rows[0]]["id"])
-        if selected_id is None:
-            listing = None
-        else:
-            listing = display_listings.loc[display_listings["id"] == selected_id].iloc[0]
-        if listing is not None:
-          with st.container(border=True):
+        selected_row = selected_rows[0] if selected_rows else 0
+        selected_id = int(display_listings.reset_index(drop=True).iloc[selected_row]["id"])
+        listing = display_listings.loc[display_listings["id"] == selected_id].iloc[0]
+    else:
+        st.info("No project listings match this search.")
+    st.caption(f"Showing {len(display_listings):,} active database rows. Blank source fields are shown as missing; no unit area or per-square-foot price is inferred.")
+    if listing is not None:
+        st.caption("Select a row above to focus its details and locality intelligence.")
+        with st.container(border=True):
             st.markdown(f"#### {listing['project_name']}")
             st.caption(f"{listing['builder_name'] or 'Builder not provided'} · {listing['Type']} · {listing['Locality']}")
             details = st.columns(4)
@@ -2432,6 +2444,12 @@ def show_source_catalog(market_slug: str | None = None):
                 url = listing.get(field)
                 if isinstance(url, str) and url.startswith("https://"):
                     col.link_button(label, url, width="stretch")
+
+    st.markdown("#### Locality intelligence · linked to selected project")
+    preferred_slug = str(listing["locality_match_slug"]) if listing is not None and pd.notna(listing.get("locality_match_slug")) else None
+    selected_project_name = str(listing["project_name"]) if listing is not None else None
+    show_locality_intelligence(city_localities, city_listings, chosen_city_slug,
+                               preferred_slug=preferred_slug, selected_project=selected_project_name)
 
 
 
