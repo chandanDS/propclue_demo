@@ -30,8 +30,31 @@ from database import (
     AIConversation, AIMessage, AuditLog, Builder, Campaign, ConsentRecord, DataSource,
     ChannelPartnerProfile, Event, Lead, LeadActivity, Locality, MarketObservation,
     Project, ProjectComparison, ProjectEvidence, ProjectInventory, SavedProperty,
-    SessionLocal, User, configure_temporary_fallback, init_db, reset_demo_data, score_from_events,
+    SessionLocal, User, init_db, reset_demo_data, score_from_events,
 )
+
+try:
+    configure_temporary_fallback = database_module.configure_temporary_fallback
+except AttributeError:
+    # A running Streamlit worker can briefly retain an older imported database
+    # module after a hot reload. Keep that worker compatible with this app.
+    def configure_temporary_fallback() -> str:
+        import tempfile
+        from pathlib import Path
+        from sqlalchemy import create_engine
+
+        fallback_path = Path(tempfile.gettempdir()) / "propclue_demo_fallback.db"
+        fallback_url = f"sqlite:///{fallback_path.as_posix()}"
+        database_module.engine.dispose()
+        database_module.engine = create_engine(
+            fallback_url,
+            connect_args={"check_same_thread": False},
+            pool_pre_ping=True,
+        )
+        database_module.SessionLocal.configure(bind=database_module.engine)
+        database_module.DB_URL = fallback_url
+        return str(fallback_path)
+
 from source_data import clear_source_cache, load_area_dna, load_catalog
 try:
     from source_data import load_builder_directory
