@@ -24,6 +24,8 @@ PROPCLUE_SOURCE_DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@HOST:5432/pro
 PROPCLUE_SOURCE_MONGODB_URI = "mongodb+srv://USER:PASSWORD@HOST/propcluev1"
 ```
 
+For a self-hosted deployment that runs the app and both source databases together, see [deploy/README.md](deploy/README.md). It keeps database ports on loopback, separates demo workflow records from the read-only PropClue source, and includes local-only backup/restore steps.
+
 ### Demo personas
 
 The start screen has **Sign in** and **Create account** modes for Buyer, Builder, and Channel partner personas. Enter any username/email and password; passwords are not checked or stored. Signup creates the demo account immediately, including the selected builder workspace for builder and channel partner personas. This intentionally open mode is only for the app's synthetic data and is not suitable for real customer information.

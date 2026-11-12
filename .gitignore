@@ -4,3 +4,7 @@ __pycache__/
 *.db
 .streamlit/secrets.toml
 .env
+deploy/.env
+deploy/.env.local
+deploy/backups/
+deploy/data/

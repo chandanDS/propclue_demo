@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${PROPCLUE_POSTGRES_ADMIN_PASSWORD:?Set this in deploy/.env}
+      POSTGRES_DB: propcluev1
+      PROPCLUE_WORKFLOW_PASSWORD: ${PROPCLUE_WORKFLOW_PASSWORD:?Set this in deploy/.env}
+      PROPCLUE_SOURCE_READONLY_PASSWORD: ${PROPCLUE_SOURCE_READONLY_PASSWORD:?Set this in deploy/.env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init/postgres-bootstrap.sh:/docker-entrypoint-initdb.d/01-bootstrap.sh:ro
+    ports:
+      - "127.0.0.1:${PROPCLUE_PG_HOST_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d propcluev1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${PROPCLUE_MONGO_ADMIN_USER:?Set this in deploy/.env}
+      MONGO_INITDB_ROOT_PASSWORD: ${PROPCLUE_MONGO_ADMIN_PASSWORD:?Set this in deploy/.env}
+      PROPCLUE_MONGO_READONLY_USER: ${PROPCLUE_MONGO_READONLY_USER:?Set this in deploy/.env}
+      PROPCLUE_MONGO_READONLY_PASSWORD: ${PROPCLUE_MONGO_READONLY_PASSWORD:?Set this in deploy/.env}
+    volumes:
+      - mongo_data:/data/db
+      - ./init/mongo-bootstrap.js:/docker-entrypoint-initdb.d/01-bootstrap.js:ro
+    ports:
+      - "127.0.0.1:${PROPCLUE_MONGO_HOST_PORT:-27018}:27017"
+    healthcheck:
+      test:
+        ["CMD-SHELL", "mongosh --quiet --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://propclue_app:${PROPCLUE_WORKFLOW_PASSWORD}@postgres:5432/propclue_demo_workflow
+      PROPCLUE_SOURCE_DATABASE_URL: postgresql+psycopg://propclue_reader:${PROPCLUE_SOURCE_READONLY_PASSWORD}@postgres:5432/propcluev1
+      PROPCLUE_SOURCE_MONGODB_URI: mongodb://${PROPCLUE_MONGO_READONLY_USER}:${PROPCLUE_MONGO_READONLY_PASSWORD}@mongo:27017/propcluev1?authSource=propcluev1
+    volumes:
+      - workflow_data:/app/data
+    ports:
+      - "127.0.0.1:${APP_PORT:-8501}:8501"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+volumes:
+  postgres_data:
+  mongo_data:
+  workflow_data:
