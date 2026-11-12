@@ -25,8 +25,13 @@ def _pg_url() -> str:
         "PROPCLUE_SOURCE_DATABASE_URL",
         "postgresql+psycopg://postgres:postgres@localhost:5433/propcluev1",
     )
-    # The backend's local config uses asyncpg; this read-only UI uses sync SQLAlchemy.
-    return url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
+    # This read-only UI uses psycopg 3. Accept provider URLs plus the backend's
+    # asyncpg URL without requiring users to rewrite their connection scheme.
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
 
 
 @st.cache_resource
