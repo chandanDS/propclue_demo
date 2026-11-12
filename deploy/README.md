@@ -11,7 +11,7 @@ This stack runs the Streamlit app, the PropClue source PostgreSQL database, Mong
    ..\.venv\Scripts\python.exe deploy\scripts\backup_local_sources.py
    ```
 
-   The PostgreSQL password is requested without echoing it. The script exports the PostgreSQL database and MongoDB `area_dna` collection into `deploy/backups/`. Those files are excluded from Git.
+   The PostgreSQL password is requested without echoing it. The script exports only `cities`, `localities`, `listings`, and `top_builders`, nulls the unused account-linked listing ID, and exports MongoDB's `area_dna` collection. Account, profile, event, and chat data are excluded. Backup files are excluded from Git.
 
 3. Start the stack:
 
@@ -41,3 +41,17 @@ The destination needs Docker Engine and the Compose plugin, persistent disk, and
 Configure a TLS reverse proxy or private access gateway on the server to proxy HTTPS to `127.0.0.1:8501`. Restrict the server firewall to SSH and the proxy's HTTPS ports. Do not expose PostgreSQL or MongoDB ports to the internet. The app currently has demo persona sign-in, so place it behind access control if it is not meant to be public.
 
 Use a dedicated server account and encrypted disk backups. Keep PostgreSQL/MongoDB secrets and database backups out of Git. This stack does not create a cloud server, DNS record, TLS certificate, or provider account; those depend on the host and domain chosen for deployment.
+
+## Free Streamlit Community Cloud setup
+
+The app can stay on Streamlit Community Cloud while its source databases live on free hosted tiers. The demo needs separate PostgreSQL projects for the source catalogue and workflow records because both use overlapping table names. The source project can hold the four catalogue tables; MongoDB Atlas holds only `propcluev1.area_dna`.
+
+The migration helpers are `scripts/restore_supabase_postgres.py` and `scripts/restore_atlas.py`. They read local-only connection details and backups; never commit those files. After copying data, create read-only database users for the app and store the resulting connection strings as Streamlit app secrets:
+
+```toml
+DATABASE_URL = "<workflow PostgreSQL URL>"
+PROPCLUE_SOURCE_DATABASE_URL = "<read-only source PostgreSQL URL>"
+PROPCLUE_SOURCE_MONGODB_URI = "<read-only Atlas URI for propcluev1>"
+```
+
+For Atlas network access, use the current outbound IP list published in [Streamlit Community Cloud status and limitations](https://docs.streamlit.io/deploy/streamlit-community-cloud/status). Those addresses can change. Keep Atlas and PostgreSQL credentials read-only for the app and out of GitHub.
