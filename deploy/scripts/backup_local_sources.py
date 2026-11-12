@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -37,11 +38,51 @@ def backup_postgres() -> Path:
         "--host", url.host or "localhost", "--port", str(url.port or 5432),
         "--username", url.username or "postgres", "--dbname", url.database or "propcluev1",
         "--file", str(output),
+        # Only export the catalogue tables read by the demo. The source DB also
+        # contains account, profile, event, and chat tables that do not belong
+        # in a public investor demo deployment.
+        "--table=public.cities",
+        "--table=public.localities",
+        "--table=public.listings",
+        "--table=public.top_builders",
     ]
     env = os.environ.copy()
     env["PGPASSWORD"] = password
     subprocess.run(command, check=True, env=env)
+    sanitize_catalog_dump(output)
     return output
+
+
+def sanitize_catalog_dump(path: Path) -> None:
+    """Remove account-linked listing IDs and their FK from this public demo export."""
+    sql = path.read_text(encoding="utf-8")
+    constraint = re.compile(
+        r"--\n-- Name: listings listings_builder_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -\n--\n\n"
+        r"ALTER TABLE ONLY public\.listings\n\s+ADD CONSTRAINT listings_builder_id_fkey "
+        r"FOREIGN KEY \(builder_id\) REFERENCES public\.users\(id\);\n",
+    )
+    sql, removed = constraint.subn("", sql)
+    if removed != 1:
+        raise SystemExit("Could not safely remove the account-linked builder constraint from the catalogue export.")
+
+    lines = sql.splitlines(keepends=True)
+    in_listings = False
+    for index, line in enumerate(lines):
+        if line.startswith("COPY public.listings ("):
+            in_listings = True
+            continue
+        if in_listings and line == "\\.\n":
+            in_listings = False
+            continue
+        if in_listings:
+            fields = line.rstrip("\r\n").split("\t")
+            if len(fields) != 25:
+                raise SystemExit("Unexpected listings row shape; refusing to write an unsanitized catalogue export.")
+            fields[3] = r"\N"  # builder_id references a private account record and is unused by the app.
+            lines[index] = "\t".join(fields) + "\n"
+    if in_listings:
+        raise SystemExit("Listings COPY block was incomplete; refusing to write an unsanitized export.")
+    path.write_text("".join(lines), encoding="utf-8")
 
 
 def backup_mongo() -> tuple[Path, int]:
