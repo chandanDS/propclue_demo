@@ -16,6 +16,7 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 from sqlalchemy import select, func
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 # Streamlit Cloud secrets are exposed before database.py creates its engine.
@@ -759,6 +760,36 @@ def available_market_labels(db) -> tuple[dict[str, str], bool]:
         for city in demo_cities
     }
     return markets, False
+
+
+def postgres_source_diagnostic() -> str:
+    """Describe source configuration without revealing a hostname or credentials."""
+    configured_url = ""
+    try:
+        configured_url = str(st.secrets.get("PROPCLUE_SOURCE_DATABASE_URL", "")).strip()
+    except Exception:
+        pass
+    configured_url = configured_url or os.environ.get("PROPCLUE_SOURCE_DATABASE_URL", "").strip()
+    if not configured_url:
+        return "PROPCLUE_SOURCE_DATABASE_URL is not set; the app is using its localhost default, which Cloud cannot reach."
+    try:
+        host = (make_url(configured_url).host or "").casefold()
+    except Exception:
+        return "PROPCLUE_SOURCE_DATABASE_URL is set, but it is not a valid SQLAlchemy database URL."
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return "PROPCLUE_SOURCE_DATABASE_URL points to localhost; Cloud cannot reach a database on your PC."
+    return "PROPCLUE_SOURCE_DATABASE_URL is set to a remote host (hostname hidden)."
+
+
+def safe_connection_error(exc: Exception) -> str:
+    """Return useful driver detail while removing embedded connection strings."""
+    message = str(exc)
+    message = re.sub(
+        r"(?i)(?:postgres(?:ql)?(?:\+[-\w]+)?|mongodb(?:\+srv)?):\/\/[^\s\"']+",
+        "[connection URL redacted]",
+        message,
+    )
+    return message[:400] or type(exc).__name__
 
 
 def login_screen(db):
@@ -2795,7 +2826,8 @@ def show_source_catalog(db, market_slug: str | None = None, demo_city: str = "Be
             "Showing the clearly labeled demo catalogue for now; Cloud needs a network-accessible PostgreSQL URL to load live records.",
             icon=":material/cloud_off:",
         )
-        st.caption(f"Source connection status: unavailable ({type(exc).__name__}).")
+        st.caption(postgres_source_diagnostic())
+        st.caption(f"Connection detail ({type(exc).__name__}): {safe_connection_error(exc)}")
         demo_projects = db.scalars(
             select(Project).where(Project.city == demo_city).order_by(Project.name)
         ).all()
