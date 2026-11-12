@@ -2425,7 +2425,7 @@ def show_admin(db, user: User):
 
 def show_market_workspace(db, user: User, city: str):
     top_header("Market overview · Live data", "Browse the connected PropClue project catalogue and linked locality intelligence in one place.")
-    show_source_catalog(st.session_state.get("market_slug"))
+    show_source_catalog(db, st.session_state.get("market_slug"), city)
 
 
 def render_market_pulse(city_label: str, city_listings: pd.DataFrame, city_localities: pd.DataFrame) -> None:
@@ -2779,7 +2779,7 @@ def show_builder_score_panel(city_listings: pd.DataFrame, listing: pd.Series, ci
         st.caption("Google Maps · rating and rating count fetched live for this view. Data is not stored. Verify the profile match before use.")
 
 
-def show_source_catalog(market_slug: str | None = None):
+def show_source_catalog(db, market_slug: str | None = None, demo_city: str = "Bengaluru"):
     """Read-only live view of the real PropClue PostgreSQL and MongoDB stores."""
     st.subheader("Project listings and locality intelligence")
     st.caption("Live PropClue catalogue from PostgreSQL, with linked locality intelligence from MongoDB. This view is read-only.")
@@ -2790,9 +2790,39 @@ def show_source_catalog(market_slug: str | None = None):
     try:
         localities, listings = load_catalog()
     except Exception as exc:
-        st.error("Could not connect to the PropClue PostgreSQL source.", icon=":material/error:")
-        st.caption(f"Connection error type: {type(exc).__name__}.")
-        st.caption("Local defaults: localhost:5433 / propcluev1. Configure PROPCLUE_SOURCE_DATABASE_URL if your database uses another address.")
+        st.warning(
+            "Live PropClue listings are unavailable from this Streamlit deployment. "
+            "Showing the clearly labeled demo catalogue for now; Cloud needs a network-accessible PostgreSQL URL to load live records.",
+            icon=":material/cloud_off:",
+        )
+        st.caption(f"Source connection status: unavailable ({type(exc).__name__}).")
+        demo_projects = db.scalars(
+            select(Project).where(Project.city == demo_city).order_by(Project.name)
+        ).all()
+        demo_localities = db.scalars(
+            select(Locality).where(Locality.city == demo_city).order_by(Locality.name)
+        ).all()
+        if not demo_projects:
+            st.info(f"No demo project records are seeded for {demo_city}.")
+            return
+        st.markdown(f"#### {demo_city} · demo catalogue")
+        st.caption("Synthetic demo data from the app database. These rows are not live PropClue PostgreSQL records.")
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Demo projects", f"{len(demo_projects):,}", border=True)
+        metric_cols[1].metric("Demo localities", f"{len(demo_localities):,}", border=True)
+        metric_cols[2].metric("Live source", "Unavailable", border=True)
+        demo_rows = [{
+            "Project": project.name,
+            "Builder": project.builder.name if project.builder else "Not provided",
+            "Type": project.property_type,
+            "Locality": project.locality.name if project.locality else "Not provided",
+            "Configuration": project.configuration,
+            "Asking price": money(project.asking_price, compact=True),
+            "Status": project.status,
+            "Data type": "Synthetic demo",
+        } for project in demo_projects]
+        st.dataframe(pd.DataFrame(demo_rows), width="stretch", hide_index=True,
+                     alt="Synthetic demo project catalogue shown while the live PostgreSQL source is unavailable")
         return
     if localities.empty or listings.empty:
         st.warning("The source connection succeeded, but no published localities or active listings were returned.")
