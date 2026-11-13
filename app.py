@@ -1148,7 +1148,7 @@ def property_map_points(listings: pd.DataFrame, localities: pd.DataFrame) -> pd.
             "listing_id": int(getattr(row, "id", 0)), "latitude": point_lat, "longitude": point_lon, "name": project_name,
             "detail": detail, "radius_px": 20,
             "fill_color": colors.get(project_type, [99, 102, 241, 220]),
-            "locality": locality_name, "building_age_demo": building_age,
+            "locality": locality_name, "locality_slug": str(slug), "building_age_demo": building_age,
             "price_range": price, "project_type": project_type,
         })
     return pd.DataFrame(records)
@@ -1197,41 +1197,41 @@ def render_circle_map(
     center_lat: float, center_lon: float, zoom: float, radius_km: float,
     localities: pd.DataFrame | None = None, projects: pd.DataFrame | None = None,
     pois: pd.DataFrame | None = None, height: int = 500, alt: str = "Property and locality map",
-    show_heatmap: bool = True,
-) -> None:
+    show_heatmap: bool = True, key: str = "circle-map",
+):
     """Render stable pixel-sized circles with hover cards, plus a radius boundary."""
     layers = []
     if show_heatmap and localities is not None and not localities.empty and "heat_weight" in localities.columns:
         layers.append(pdk.Layer(
-            "HeatmapLayer", data=localities, get_position="[longitude, latitude]",
+            "HeatmapLayer", id="locality-heatmap", data=localities, get_position="[longitude, latitude]",
             get_weight="heat_weight", radius_pixels=82, intensity=1.0, threshold=0.04,
             opacity=0.48, pickable=False,
             color_range=[[10, 110, 110, 0], [13, 148, 136, 90], [245, 158, 11, 155], [239, 68, 68, 215]],
         ))
     radius_frame = pd.DataFrame([{"latitude": center_lat, "longitude": center_lon, "radius_m": radius_km * 1000}])
     layers.append(pdk.Layer(
-        "ScatterplotLayer", data=radius_frame, get_position="[longitude, latitude]",
+        "ScatterplotLayer", id="search-radius", data=radius_frame, get_position="[longitude, latitude]",
         get_radius="radius_m", radius_units="meters", stroked=True, filled=False,
         get_line_color=[13, 148, 136, 155], line_width_min_pixels=2,
         pickable=False, auto_highlight=False,
     ))
     if localities is not None and not localities.empty:
         layers.append(pdk.Layer(
-            "ScatterplotLayer", data=localities, get_position="[longitude, latitude]",
+            "ScatterplotLayer", id="locality-pins", data=localities, get_position="[longitude, latitude]",
             get_radius=9, radius_units="pixels", radius_min_pixels=8, radius_max_pixels=13,
             get_fill_color="fill_color", stroked=True, get_line_color=[255, 255, 255, 235],
             line_width_min_pixels=1, pickable=True, auto_highlight=True,
         ))
     if projects is not None and not projects.empty:
         layers.append(pdk.Layer(
-            "ScatterplotLayer", data=projects, get_position="[longitude, latitude]",
+            "ScatterplotLayer", id="project-pins", data=projects, get_position="[longitude, latitude]",
             get_radius="radius_px", radius_units="pixels", radius_min_pixels=16, radius_max_pixels=24,
             get_fill_color="fill_color", stroked=True, get_line_color=[255, 255, 255, 245],
             line_width_min_pixels=2, pickable=True, auto_highlight=True,
         ))
     if pois is not None and not pois.empty:
         layers.append(pdk.Layer(
-            "ScatterplotLayer", data=pois, get_position="[longitude, latitude]",
+            "ScatterplotLayer", id="amenity-pins", data=pois, get_position="[longitude, latitude]",
             get_radius="radius_px", radius_units="pixels", radius_min_pixels=9, radius_max_pixels=13,
             get_fill_color="fill_color", stroked=True, get_line_color=[255, 255, 255, 255],
             line_width_min_pixels=2, pickable=True, auto_highlight=True,
@@ -1239,10 +1239,11 @@ def render_circle_map(
     deck = pdk.Deck(
         layers=layers,
         initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=0),
-        tooltip={"html": "{detail}", "style": {"backgroundColor": "#0c213c", "color": "#f5f8fc", "fontSize": "12px", "padding": "10px", "maxWidth": "330px"}},
+        tooltip={"html": "<div><b>{name}</b><br/>{detail}</div>", "style": {"backgroundColor": "#0c213c", "color": "#f5f8fc", "fontSize": "12px", "padding": "10px", "maxWidth": "360px", "borderRadius": "10px"}},
         map_style="light",
     )
-    st.pydeck_chart(deck, width="stretch", height=height, alt=alt)
+    return st.pydeck_chart(deck, width="stretch", height=height, alt=alt,
+                           key=key, on_select="rerun", selection_mode="single-object")
 
 
 def demo_property_rating(
@@ -1828,12 +1829,13 @@ def show_map(db, user: User, city: str, show_header: bool = True):
                 f'<div class="pc-map-context"><small>Area lens · {radius_km} km radius</small><strong>{html.escape(str(locked_row["name"] if locked_in_market and locked_row is not None else center["name"]))}</strong><span>{"Area locked · amenity points and analysis are scoped to this locality." if locked_in_market else "Lock this locality to reveal a radius of nearby amenity and market signals."}</span></div>',
                 unsafe_allow_html=True,
             )
-            render_circle_map(
+            map_event = render_circle_map(
                 map_center_lat, map_center_lon, float(zoom), float(radius_km),
                 localities=map_points, projects=project_points, pois=poi_points if not poi_points.empty else None,
                 height=570,
                 alt=f"Map of {center['city']} with approximate property circles, locality markers, and radius amenity points",
                 show_heatmap=show_heatmap,
+                key=f"map-intel-{market_slug}-{center_slug}",
             )
             radius_anchor = str(selected_property["project_name"]) if selected_property is not None else str(center["name"])
             st.caption(f"Radius centered on {radius_anchor}. Project pins use approximate locality-offset coordinates. Hover project and amenity circles for detail.")
@@ -1842,9 +1844,23 @@ def show_map(db, user: User, city: str, show_header: bool = True):
             preferred_focus = str(locked_slug) if locked_in_market else str(center_slug)
             if preferred_focus not in side_options:
                 preferred_focus = str(center_slug)
+            selected_marker = None
+            try:
+                selected_layers = map_event.selection.objects
+                for selected_items in selected_layers.values():
+                    if selected_items:
+                        selected_marker = selected_items[0]
+                        break
+            except (AttributeError, TypeError):
+                selected_marker = None
+            selected_marker = selected_marker if isinstance(selected_marker, dict) else None
+            marker_slug = (selected_marker or {}).get("slug") or (selected_marker or {}).get("locality_slug")
+            side_widget_key = f"map-side-area-{market_slug}"
+            if marker_slug in set(side_options):
+                st.session_state[side_widget_key] = str(marker_slug)
             side_slug = st.selectbox("Area insight", side_options, index=side_options.index(preferred_focus),
                 format_func=lambda slug: str(localities.loc[localities["slug"].astype(str) == slug, "name"].iloc[0]),
-                key=f"map-side-area-{market_slug}")
+                key=side_widget_key)
             focus = localities.loc[localities["slug"].astype(str) == side_slug].iloc[0]
             try:
                 focus_doc = load_area_dna(str(focus["slug"]), str(focus.get("mongodb_id") or "")) or {}
@@ -1863,7 +1879,35 @@ def show_map(db, user: User, city: str, show_header: bool = True):
             side_metrics[0].metric("Apartment ask", f"₹{float(real['avg_sale_psf_apartment']):,.0f}/sq ft" if isinstance(real, dict) and real.get("avg_sale_psf_apartment") else "Not stored", border=True)
             trend = real.get("price_trend_pct_6m") if isinstance(real, dict) else None
             side_metrics[1].metric("6-month trend", f"{float(trend):+.1f}%" if trend is not None else "Not stored", border=True)
-            with st.expander("Infrastructure & future signals", expanded=True):
+            if selected_marker:
+                marker_name = html.escape(str(selected_marker.get("name", "Map feature")))
+                marker_detail = str(selected_marker.get("detail", "No additional detail available.")).replace("<br>", " · ").replace("<br/>", " · ")
+                st.info(f"**Selected map feature** · {marker_name}\n\n{marker_detail}", icon=":material/pin_drop:")
+            if locked_in_market:
+                demo_identity = f"project:{int(selected_property['id'])}" if selected_property is not None else f"locality:{focus['slug']}"
+                age_seed = int(hashlib.sha256(f"{demo_identity}:representative-age:intelligence_demo".encode()).hexdigest()[:8], 16)
+                building_age = 1 + age_seed % 35
+                def score_label(value, fallback):
+                    try:
+                        score = float(value) if pd.notna(value) else fallback
+                        score = score / 10 if score > 10 else score
+                        return f"{max(0, min(10, score)):.1f}/10" + ("" if pd.notna(value) else " · demo")
+                    except (TypeError, ValueError):
+                        return f"{fallback:.1f}/10 · demo"
+                score_cols = st.columns(3)
+                score_cols[0].metric("Lifestyle", score_label(focus.get("lifestyle_score"), 6.5), border=True)
+                score_cols[1].metric("Commute proxy", score_label(focus.get("connectivity_score"), 6.2), border=True)
+                score_cols[2].metric("Building age", f"{building_age} yrs · demo", border=True)
+                focus_pois = intelligence_demo_pois(float(focus["latitude"]), float(focus["longitude"]), radius_km, str(focus["slug"]))
+                st.markdown("**Nearest radius signals**")
+                poi_view = focus_pois[["category", "name", "distance_km", "source"]].rename(columns={
+                    "category": "Category", "name": "Demo place", "distance_km": "Distance km", "source": "Data source",
+                })
+                st.dataframe(poi_view, width="stretch", hide_index=True, height=270, alt=f"Synthetic nearest schools, hospitals, tech parks, fuel, airport, railway, malls and public transport around {focus['name']}")
+                st.caption("All eight place names and distances use synthetic `intelligence_demo` points and straight-line distance, not verified venues or travel times.")
+            else:
+                st.info("Lock an area to show the eight-category radius scan, demo building age, lifestyle and commute indicators.", icon=":material/lock_open:")
+            with st.expander("Infrastructure & future signals", expanded=False):
                 values = [f"{key.replace('_', ' ').title()}: {value}" for key, value in infra.items() if value is not None] if isinstance(infra, dict) else []
                 st.markdown("**Infrastructure**")
                 st.write(" · ".join(values[:4]) if values else "No stored infrastructure signals")
@@ -3235,9 +3279,9 @@ def main():
         if pending_route in buyer_targets:
             st.switch_page(buyer_targets[pending_route])
 
-        header_left, header_center, header_right = st.columns([1.25, 4.7, 1.7], vertical_alignment="center")
+        header_left, header_center, market_header, header_right = st.columns([1.5, 5.4, 1.7, 2.5], vertical_alignment="center")
         with header_left:
-            brand_lockup(compact=False)
+            brand_lockup(compact=True)
         with header_center:
             module_cols = st.columns(len(role_pages), gap="small")
             labels_by_role = {
@@ -3250,16 +3294,16 @@ def main():
             for col, page, label in zip(module_cols, role_pages, nav_labels):
                 with col:
                     st.page_link(page, label=label, width="stretch")
+        with market_header:
+            city = get_city_filter(db, user)
         with header_right:
-            st.caption(f"{user.name} · {user.role.replace('_', ' ').title()}")
-            if st.button("Sign out", key="top-sign-out", width="stretch"):
+            user_col, signout_col = st.columns([1.55, .9], vertical_alignment="center")
+            user_col.markdown(f"<div style='white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.78rem;font-weight:700;color:#24465c'>{html.escape(user.name)}<br><span style='font-size:.68rem;font-weight:500;color:#688095'>{html.escape(user.role.replace('_', ' ').title())}</span></div>", unsafe_allow_html=True)
+            if signout_col.button("Sign out", key="top-sign-out", width="stretch", icon=":material/logout:"):
                 st.session_state.pop("user_id", None)
                 st.session_state["show_auth"] = False
                 st.rerun()
 
-        market_row = st.columns([1.8, 2.2, 1.8])
-        with market_row[1]:
-            city = get_city_filter(db, user)
         if DATABASE_FALLBACK_NOTICE:
             st.warning(DATABASE_FALLBACK_NOTICE, icon=":material/cloud_off:")
         current_path = urlparse(str(getattr(st.context, "url", ""))).path.rstrip("/")
