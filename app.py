@@ -1370,7 +1370,9 @@ def render_circle_map(
         layers=layers,
         initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=0),
         tooltip={"html": "<div><b>{name}</b><br/>{detail}</div>", "style": {"backgroundColor": "#0c213c", "color": "#f5f8fc", "fontSize": "12px", "padding": "10px", "maxWidth": "360px", "borderRadius": "10px"}},
-        map_style="light",
+        # Use CARTO's public no-key style URL. Pydeck's `light` alias resolves
+        # to a Mapbox style and triggers an API-key prompt in Cloud.
+        map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
     )
     return st.pydeck_chart(deck, width="stretch", height=height, alt=alt,
                            key=key, on_select="rerun", selection_mode="single-object")
@@ -1742,6 +1744,10 @@ def show_map(db, user: User, city: str, show_header: bool = True):
 
     localities = localities.sort_values("name").reset_index(drop=True)
     listing_counts_all = listings["locality_match_slug"].dropna().value_counts().to_dict()
+    price_low = listings["price_min"].fillna(listings["price_max"])
+    price_high = listings["price_max"].fillna(listings["price_min"])
+    price_values = pd.concat([price_low, price_high]).dropna().astype(float)
+    project_types = sorted(listings["project_type"].dropna().astype(str).unique().tolist())
     localities["active_listings"] = localities["slug"].map(listing_counts_all).fillna(0).astype(int)
     locality_slugs = localities["slug"].astype(str).tolist()
     hsr_slug = "bangalore-hsr-layout"
@@ -1762,8 +1768,8 @@ def show_map(db, user: User, city: str, show_header: bool = True):
         selected_property_id = None
         selected_property = None
     else:
-        search_cols = st.columns([1, 1.45], gap="medium")
-        with search_cols[0]:
+        map_filter_cols = st.columns([1.2, 1.8, 1, 1.15, 2.1, 1.4, .85, 1.45, .85], gap="small", vertical_alignment="bottom")
+        with map_filter_cols[0]:
             center_slug = st.selectbox(
                 "Search locality", locality_slugs, index=locality_slugs.index(preferred_center),
                 format_func=lambda slug: str(localities.loc[localities["slug"] == slug, "name"].iloc[0]),
@@ -1779,7 +1785,7 @@ def show_map(db, user: User, city: str, show_header: bool = True):
         property_key = f"live-map-property-v1-{center_slug}"
         if locked_slug == center_slug and st.session_state.get("locked_project_id") in property_ids:
             st.session_state[property_key] = int(st.session_state["locked_project_id"])
-        with search_cols[1]:
+        with map_filter_cols[1]:
             selected_property_id = st.selectbox(
                 "Search property · optional",
                 options=[None, *property_ids],
@@ -1788,6 +1794,31 @@ def show_map(db, user: User, city: str, show_header: bool = True):
                 help="Search projects in the selected locality. Selecting one filters the project pins; use Lock search to keep the radius focused on it.",
             )
         selected_property = locality_projects.loc[locality_projects["id"] == selected_property_id].iloc[0] if selected_property_id is not None else None
+        radius_km = map_filter_cols[2].slider("Radius (km)", 1, 50, 20, key="live-map-radius-v2")
+        zoom_label = map_filter_cols[3].selectbox("Map scale", ["District overview", "Locality", "Street / precinct"], index=1, key="live-map-scale-v2")
+        zoom = {"District overview": 9.5, "Locality": 12.5, "Street / precinct": 15.5}[zoom_label]
+        if not price_values.empty:
+            minimum_cr = max(0.0, round(float(price_values.min()) / 10_000_000, 1))
+            maximum_cr = max(minimum_cr + 0.1, round(float(price_values.max()) / 10_000_000, 1))
+            if maximum_cr <= minimum_cr:
+                maximum_cr = minimum_cr + 0.1
+            price_range = map_filter_cols[4].slider("Price (₹ Cr)", min_value=minimum_cr, max_value=maximum_cr,
+                value=(minimum_cr, maximum_cr), step=0.1, key="live-map-price-range")
+            include_unpriced = map_filter_cols[5].toggle("Unpriced", value=False, key="live-map-include-unpriced")
+            in_price = (price_high >= price_range[0] * 10_000_000) & (price_low <= price_range[1] * 10_000_000)
+            if include_unpriced:
+                in_price |= price_low.isna() & price_high.isna()
+            matching_listings = listings[in_price].copy()
+        else:
+            matching_listings = listings.copy()
+            price_range = None
+            include_unpriced = True
+            map_filter_cols[4].caption("Price unavailable")
+            map_filter_cols[5].caption("All prices")
+        selected_types = map_filter_cols[6].multiselect("Property type", project_types, default=project_types, key="live-map-project-types")
+        show_heatmap = map_filter_cols[7].toggle("Heatmap", value=True, key="live-map-show-heatmap")
+        heatmap_signal = map_filter_cols[8].selectbox("Heat signal", ["Project coverage", "Locality score"], key="live-map-heat-signal",
+            help="Coverage uses active catalogue rows; locality score uses its connected score field. Neither is a valuation.")
     center = localities.loc[localities["slug"] == center_slug].iloc[0]
     st.markdown("#### Lock a locality or a property radius")
     lock_col, status_col = st.columns([1, 2], vertical_alignment="center")
@@ -1810,37 +1841,15 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     else:
         status_col.caption("Search a locality, optionally narrow to a project, then lock the radius. The supervisor report appears here.")
 
-    price_low = listings["price_min"].fillna(listings["price_max"])
-    price_high = listings["price_max"].fillna(listings["price_min"])
-    price_values = pd.concat([price_low, price_high]).dropna().astype(float)
-    filter_cols = st.columns([1, 1, 1.4, 1])
-    radius_km = filter_cols[0].slider("Search radius (km)", 1, 50, 20, key="live-map-radius-v2")
     if zoomedin_demo_mode:
-        filter_cols[1].caption("Map scale: block / building footprint · `zoomedin_demo`")
+        radius_km = st.session_state.get("live-map-radius-v2", 20)
         zoom = 17.2
-    else:
-        zoom_label = filter_cols[1].selectbox("Map scale", ["District overview", "Locality", "Street / precinct"], index=1, key="live-map-scale-v2")
-        zoom = {"District overview": 9.5, "Locality": 12.5, "Street / precinct": 15.5}[zoom_label]
-    if not price_values.empty:
-        minimum_cr = max(0.0, round(float(price_values.min()) / 10_000_000, 1))
-        maximum_cr = max(minimum_cr + 0.1, round(float(price_values.max()) / 10_000_000, 1))
-        if maximum_cr <= minimum_cr:
-            maximum_cr = minimum_cr + 0.1
-        price_range = filter_cols[2].slider(
-            "Listing price range (₹ Cr)", min_value=minimum_cr, max_value=maximum_cr,
-            value=(minimum_cr, maximum_cr), step=0.1, key="live-map-price-range",
-        )
-        include_unpriced = filter_cols[3].toggle("Include unpriced", value=False, key="live-map-include-unpriced")
-        in_price = (price_high >= price_range[0] * 10_000_000) & (price_low <= price_range[1] * 10_000_000)
-        if include_unpriced:
-            in_price |= price_low.isna() & price_high.isna()
-        matching_listings = listings[in_price].copy()
-    else:
+        price_range = None
+        include_unpriced = True
+        selected_types = project_types
+        show_heatmap = True
+        heatmap_signal = "Project coverage"
         matching_listings = listings.copy()
-        filter_cols[2].caption("No listing prices in this market")
-        filter_cols[3].caption("All active listings shown")
-    project_types = sorted(listings["project_type"].dropna().astype(str).unique().tolist())
-    selected_types = st.multiselect("Project types", project_types, default=project_types, key="live-map-project-types")
     if selected_types:
         matching_listings = matching_listings[matching_listings["project_type"].isin(selected_types)]
     else:
@@ -1865,10 +1874,6 @@ def show_map(db, user: User, city: str, show_header: bool = True):
         except Exception:
             locked_doc = {}
         locked_area_listings = listings[listings["locality_match_slug"] == locked_slug]
-        with st.container(border=True):
-            show_area_agent_report(db, user, locked_row, locked_doc, locked_area_listings)
-    else:
-        st.info("Choose an area and select **Lock & run area analysis** to see source-backed market agents, an impact pathway, and a supervisor draft here.", icon=":material/lock_open:")
 
     hsr_demo_parcels = pd.DataFrame()
     if zoomedin_demo_mode:
@@ -1887,13 +1892,6 @@ def show_map(db, user: User, city: str, show_header: bool = True):
             hsr_demo_parcels["asking_psf"].between(*demo_asking_range)
         ].copy()
 
-    heatmap_control_cols = st.columns([1, 1.7, 2.4])
-    show_heatmap = heatmap_control_cols[0].toggle("Locality heatmap", value=True, key="live-map-show-heatmap")
-    heatmap_signal = heatmap_control_cols[1].selectbox(
-        "Heatmap signal", ["Project coverage", "Locality score"], key="live-map-heat-signal",
-        help="Project coverage uses active catalogue rows; locality score uses the connected score field. Neither is a property valuation.",
-    )
-    heatmap_control_cols[2].caption("Heat colors show the selected signal. Pins retain project names and hover details.")
     localities["distance_km"] = localities.apply(
         lambda row: distance_km(map_center_lat, map_center_lon, float(row["latitude"]), float(row["longitude"])),
         axis=1,
@@ -2030,6 +2028,12 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     stats[2].metric("Listings without exact area match", f"{unlocated_count:,}", border=True)
     stats[3].metric("Center locality score", f"{float(center['composite_score']):.1f}/10" if pd.notna(center["composite_score"]) else "Not scored", border=True)
     st.markdown("**Map legend**　🟠 selected area　🟢 locality with matching active projects　⚪ no exact project match")
+    st.markdown("### Area Intelligence")
+    if locked_in_market and locked_row is not None:
+        with st.container(border=True):
+            show_area_agent_report(db, user, locked_row, locked_doc, locked_area_listings)
+    else:
+        st.info("Choose a locality or property, lock the radius, and its area intelligence will appear here.", icon=":material/lock_open:")
     st.session_state["map_compare_context"] = {
         "market_slug": market_slug, "center_slug": center_slug, "radius_km": float(radius_km),
         "listing_ids": [int(value) for value in radius_listings["id"].dropna().tolist()],
@@ -3428,4 +3432,3 @@ def main():
 
 
 main()
-
