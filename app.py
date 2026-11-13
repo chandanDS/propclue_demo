@@ -289,6 +289,136 @@ export default function (component) {
 )
 
 
+_HOVER_MAP_COMPONENT = st.components.v2.component(
+    "propclue_hover_map_sidepane",
+    html="""
+    <section class="pc-hover-map-shell">
+      <div class="pc-hover-map-canvas" role="application" aria-label="Interactive property radius map"></div>
+      <aside class="pc-hover-map-pane" aria-live="polite">
+        <div class="pc-hover-map-kicker">AREA / PROJECT BRIEF</div>
+        <div class="pc-hover-map-card"></div>
+      </aside>
+    </section>
+    """,
+    css="""
+    .pc-hover-map-shell{display:grid;grid-template-columns:minmax(0,2.05fr) minmax(285px,1fr);gap:0;min-height:610px;border:1px solid #dce7ed;border-radius:20px;overflow:hidden;background:#fff;box-shadow:0 12px 34px rgba(12,33,60,.08);font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#102a43}
+    .pc-hover-map-canvas{height:610px;min-width:0;background:#e9eef1}
+    .pc-hover-map-pane{height:610px;overflow-y:auto;padding:1.15rem 1rem;background:linear-gradient(180deg,#f9fcfd,#fff 48%);border-left:1px solid #e1e9ed}
+    .pc-hover-map-kicker{font-size:.68rem;letter-spacing:.12em;font-weight:800;color:#0d9488;margin-bottom:.55rem}
+    .pc-pane-title{font-size:1.08rem;font-weight:800;line-height:1.25;color:#102a43;margin-bottom:.25rem}
+    .pc-pane-subtitle{font-size:.76rem;color:#647b8d;line-height:1.45;margin-bottom:.9rem}
+    .pc-pane-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.5rem;margin:.65rem 0 .9rem}
+    .pc-pane-metric{background:#fff;border:1px solid #e1e9ed;border-radius:12px;padding:.62rem .68rem;min-width:0}
+    .pc-pane-label{font-size:.66rem;color:#6b8091;line-height:1.2}
+    .pc-pane-value{font-size:.95rem;font-weight:800;color:#12334a;margin-top:.22rem;overflow-wrap:anywhere}
+    .pc-pane-section{font-size:.78rem;font-weight:800;color:#28465c;margin:.9rem 0 .4rem}
+    .pc-pane-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.55rem;align-items:center;padding:.48rem 0;border-bottom:1px solid #edf1f3}
+    .pc-pane-row:last-child{border-bottom:0}
+    .pc-pane-place{font-size:.75rem;font-weight:700;color:#29475d;line-height:1.25}
+    .pc-pane-category{font-size:.67rem;color:#768a99;margin-top:.13rem}
+    .pc-pane-distance{font-size:.74rem;font-weight:800;color:#0d8179;white-space:nowrap}
+    .pc-pane-note{font-size:.68rem;line-height:1.45;color:#738697;margin-top:.75rem;padding:.58rem .65rem;background:#f1f6f7;border-radius:10px}
+    .pc-pane-hover{padding:.72rem .75rem;background:#effaf8;border:1px solid #bfe9df;border-radius:12px;margin:.7rem 0}
+    .pc-pane-hover-title{font-weight:800;font-size:.85rem;color:#0b716b;line-height:1.3}
+    .pc-pane-hover-detail{white-space:pre-line;font-size:.73rem;line-height:1.5;color:#38566b;margin-top:.35rem;overflow-wrap:anywhere}
+    .pc-map-fallback{padding:1rem;color:#4a6478}
+    @media(max-width:850px){.pc-hover-map-shell{grid-template-columns:1fr}.pc-hover-map-canvas{height:440px}.pc-hover-map-pane{height:auto;max-height:520px;border-left:0;border-top:1px solid #e1e9ed}}
+    """,
+    js="""
+    export default function(component){
+      const {data,parentElement}=component;
+      const mapEl=parentElement.querySelector('.pc-hover-map-canvas');
+      const pane=parentElement.querySelector('.pc-hover-map-card');
+      if(!mapEl||!pane)return;
+      const addText=(parent,tag,className,text)=>{const el=document.createElement(tag);if(className)el.className=className;el.textContent=text??'';parent.appendChild(el);return el;};
+      const safeDetail=(value)=>String(value??'').replace(/<br\\s*\\/?\\s*>/gi,'\\n').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#x27;/g,"'");
+      const renderDefault=()=>{
+        pane.replaceChildren();
+        const d=data?.panel||{};
+        addText(pane,'div','pc-pane-title',d.title||'Lock an area to explore its radius');
+        addText(pane,'div','pc-pane-subtitle',d.subtitle||'Hover over a locality, project, or amenity pin to inspect its details here.');
+        if(d.metrics?.length){
+          const grid=addText(pane,'div','pc-pane-grid','');
+          for(const item of d.metrics){const card=addText(grid,'div','pc-pane-metric','');addText(card,'div','pc-pane-label',item.label);addText(card,'div','pc-pane-value',item.value);}
+        }
+        if(d.amenities?.length){
+          addText(pane,'div','pc-pane-section','Nearby radius signals');
+          for(const item of d.amenities){const row=addText(pane,'div','pc-pane-row','');const left=addText(row,'div','','');addText(left,'div','pc-pane-place',item.name);addText(left,'div','pc-pane-category',item.category+' · intelligence_demo');addText(row,'div','pc-pane-distance',item.distance+' km');}
+        }
+        const note=d.note||'Hover a map pin to replace this area brief with its project or proximity details.';
+        addText(pane,'div','pc-pane-note',note);
+      };
+      const renderFeature=(feature)=>{
+        if(!feature){renderDefault();return;}
+        parentElement.__pcHasHovered=true;
+        pane.replaceChildren();
+        addText(pane,'div','pc-pane-title',feature.name||feature.category||'Map detail');
+        addText(pane,'div','pc-pane-subtitle',feature.category?feature.category+' · radius feature':(feature.kind==='project'?'Project listing · approximate map point':'Locality signal'));
+        const box=addText(pane,'div','pc-pane-hover','');
+        addText(box,'div','pc-pane-hover-title','Selected by map hover');
+        addText(box,'div','pc-pane-hover-detail',safeDetail(feature.detail||feature.summary||'No additional source detail is available.'));
+        if(feature.distance_km!==undefined&&feature.distance_km!==null){const grid=addText(pane,'div','pc-pane-grid','');const c=addText(grid,'div','pc-pane-metric','');addText(c,'div','pc-pane-label','Straight-line distance');addText(c,'div','pc-pane-value',Number(feature.distance_km).toFixed(1)+' km');}
+        if(feature.building_age_demo!==undefined){const grid=pane.querySelector('.pc-pane-grid')||addText(pane,'div','pc-pane-grid','');const c=addText(grid,'div','pc-pane-metric','');addText(c,'div','pc-pane-label','Representative building age');addText(c,'div','pc-pane-value',feature.building_age_demo+' years · demo');}
+        const d=data?.panel||{};
+        if(d.metrics?.length){const grid=addText(pane,'div','pc-pane-grid','');for(const item of d.metrics){const card=addText(grid,'div','pc-pane-metric','');addText(card,'div','pc-pane-label',item.label);addText(card,'div','pc-pane-value',item.value);}}
+        if(d.amenities?.length){addText(pane,'div','pc-pane-section','Nearby radius signals');for(const item of d.amenities){const row=addText(pane,'div','pc-pane-row','');const left=addText(row,'div','','');addText(left,'div','pc-pane-place',item.name);addText(left,'div','pc-pane-category',item.category+' · intelligence_demo');addText(row,'div','pc-pane-distance',item.distance+' km');}}
+        addText(pane,'div','pc-pane-note','Map points and proximity estimates are approximate. Synthetic records carry the intelligence_demo label.');
+      };
+      const ensureLeaflet=(done)=>{
+        if(window.L){done();return;}
+        if(!document.querySelector('link[data-pc-leaflet]')){const link=document.createElement('link');link.rel='stylesheet';link.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';link.dataset.pcLeaflet='1';document.head.appendChild(link);}
+        const existing=document.querySelector('script[data-pc-leaflet]');
+        if(existing){existing.addEventListener('load',done,{once:true});if(window.L)done();return;}
+        const script=document.createElement('script');script.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';script.dataset.pcLeaflet='1';script.onload=done;script.onerror=()=>{mapEl.innerHTML='<div class="pc-map-fallback">Interactive map tiles could not load. Check the browser network connection.</div>';};document.head.appendChild(script);
+      };
+      const draw=()=>{
+        if(!window.L)return;
+        let map=parentElement.__pcHoverMap;
+        if(parentElement.__pcContext!==data.context_id){parentElement.__pcContext=data.context_id;parentElement.__pcHasHovered=false;}
+        const center=[Number(data.center_lat),Number(data.center_lon)];
+        if(!map){
+          map=L.map(mapEl,{scrollWheelZoom:true}).setView(center,Number(data.zoom)||12);
+          L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:20,attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
+          parentElement.__pcHoverMap=map;
+          map.on('mouseout',()=>{});
+        }else if(parentElement.__pcCenter!==center.join(',')||parentElement.__pcZoom!==Number(data.zoom)){
+          map.setView(center,Number(data.zoom)||12);
+        }
+        parentElement.__pcCenter=center.join(',');
+        parentElement.__pcZoom=Number(data.zoom)||12;
+        if(parentElement.__pcOverlay)parentElement.__pcOverlay.clearLayers();
+        const overlay=L.layerGroup().addTo(map);parentElement.__pcOverlay=overlay;
+        if(data.radius_km){L.circle(center,{radius:Number(data.radius_km)*1000,color:'#0d9488',weight:2,opacity:.8,fillOpacity:.035,interactive:false}).addTo(overlay);}
+        if(data.show_heatmap){for(const item of (data.localities||[])){const intensity=Math.max(0,Math.min(1,Number(item.heat_weight)||0));if(intensity>0){L.circle([Number(item.latitude),Number(item.longitude)],{radius:Math.max(180,Math.min(900,260+Number(item.matching_listings||0)*35)),color:intensity>.7?'#ef4444':(intensity>.4?'#f59e0b':'#0d9488'),weight:0,fillColor:intensity>.7?'#ef4444':(intensity>.4?'#f59e0b':'#0d9488'),fillOpacity:.13+intensity*.15,interactive:false}).addTo(overlay);}}}
+        const colorFor=(value)=>Array.isArray(value)?`rgb(${value[0]},${value[1]},${value[2]})`:String(value||'#0d9488');
+        const addPin=(item,kind)=>{
+          const lat=Number(item.latitude),lon=Number(item.longitude);if(!Number.isFinite(lat)||!Number.isFinite(lon))return;
+          const color=colorFor(item.fill_color);
+          const radius=kind==='project'?9:(kind==='amenity'?7:6);
+          const marker=L.circleMarker([lat,lon],{radius,weight:2,color:'#ffffff',fillColor:color,fillOpacity:.94});
+          const feature={...item,kind};
+          marker.bindTooltip(String(item.name||item.category||'Map detail'),{direction:'top',opacity:.96,sticky:true});
+          marker.on('mouseover',()=>renderFeature(feature));
+          marker.on('click',()=>renderFeature(feature));
+          marker.addTo(overlay);
+        };
+        for(const item of (data.localities||[]))addPin(item,'locality');
+        for(const item of (data.projects||[]))addPin(item,'project');
+        for(const item of (data.pois||[]))addPin(item,'amenity');
+        if(!parentElement.__pcHasHovered)renderDefault();
+        setTimeout(()=>map.invalidateSize(),50);
+      };
+      ensureLeaflet(draw);
+    }
+    """,
+)
+
+
+def render_hover_map(*, data: dict, key: str) -> None:
+    """Render Leaflet map with in-component hover-to-side-pane details."""
+    _HOVER_MAP_COMPONENT(key=key, data=data, width="stretch", height=610)
+
+
 def track_buyer_data(db, user: User, module: str, items: list[dict], title: str = "") -> None:
     """Capture intentional buyer data hovers, gated by the buyer's analytics consent."""
     if user.role != "buyer" or not items:
@@ -1823,109 +1953,71 @@ def show_map(db, user: User, city: str, show_header: bool = True):
                             alt="Zoomable HSR synthetic building-block map with hover details for each sample parcel")
             st.caption("Land use colors: residential (teal), mixed use (orange), commercial (blue). Each parcel is a generated polygon; the smaller gold inset is a sample building footprint. Hover for asking price, floors, units, absorption and trend. Drag to zoom and use the toolbar to reset.")
     else:
-        map_cols = st.columns([2.15, 1], gap="large")
-        with map_cols[0]:
-            st.markdown(
-                f'<div class="pc-map-context"><small>Area lens · {radius_km} km radius</small><strong>{html.escape(str(locked_row["name"] if locked_in_market and locked_row is not None else center["name"]))}</strong><span>{"Area locked · amenity points and analysis are scoped to this locality." if locked_in_market else "Lock this locality to reveal a radius of nearby amenity and market signals."}</span></div>',
-                unsafe_allow_html=True,
-            )
-            map_event = render_circle_map(
-                map_center_lat, map_center_lon, float(zoom), float(radius_km),
-                localities=map_points, projects=project_points, pois=poi_points if not poi_points.empty else None,
-                height=570,
-                alt=f"Map of {center['city']} with approximate property circles, locality markers, and radius amenity points",
-                show_heatmap=show_heatmap,
-                key=f"map-intel-{market_slug}-{center_slug}",
-            )
-            radius_anchor = str(selected_property["project_name"]) if selected_property is not None else str(center["name"])
-            st.caption(f"Radius centered on {radius_anchor}. Project pins use approximate locality-offset coordinates. Hover project and amenity circles for detail.")
-        with map_cols[1]:
-            side_options = nearby.sort_values("distance_km")["slug"].astype(str).tolist()
-            preferred_focus = str(locked_slug) if locked_in_market else str(center_slug)
-            if preferred_focus not in side_options:
-                preferred_focus = str(center_slug)
-            selected_marker = None
+        st.markdown(
+            f'<div class="pc-map-context"><small>Area lens · {radius_km} km radius</small><strong>{html.escape(str(locked_row["name"] if locked_in_market and locked_row is not None else center["name"]))}</strong><span>{"Area locked · hover a property or amenity to open its detail in the side pane." if locked_in_market else "Lock this locality to reveal nearby signals. Hover map pins for details."}</span></div>',
+            unsafe_allow_html=True,
+        )
+        focus = locked_row if locked_in_market and locked_row is not None else center
+        try:
+            focus_doc = (locked_doc if locked_in_market else load_area_dna(str(focus["slug"]), str(focus.get("mongodb_id") or ""))) or {}
+        except Exception:
+            focus_doc = {}
+        real = focus_doc.get("real_estate", {}) if isinstance(focus_doc, dict) else {}
+        quality_label = focus_doc.get("meta", {}).get("data_quality", "not specified") if isinstance(focus_doc, dict) else "not specified"
+        poi_panel = intelligence_demo_pois(map_center_lat, map_center_lon, radius_km, str(focus["slug"])) if locked_in_market else pd.DataFrame()
+        demo_identity = f"project:{int(selected_property['id'])}" if selected_property is not None else f"locality:{focus['slug']}"
+        age_seed = int(hashlib.sha256(f"{demo_identity}:representative-age:intelligence_demo".encode()).hexdigest()[:8], 16)
+        building_age = 1 + age_seed % 35
+        def score_text(value, fallback):
             try:
-                selected_layers = map_event.selection.objects
-                for selected_items in selected_layers.values():
-                    if selected_items:
-                        selected_marker = selected_items[0]
-                        break
-            except (AttributeError, TypeError):
-                selected_marker = None
-            selected_marker = selected_marker if isinstance(selected_marker, dict) else None
-            marker_slug = (selected_marker or {}).get("slug") or (selected_marker or {}).get("locality_slug")
-            side_widget_key = f"map-side-area-{market_slug}"
-            if marker_slug in set(side_options):
-                st.session_state[side_widget_key] = str(marker_slug)
-            side_slug = st.selectbox("Area insight", side_options, index=side_options.index(preferred_focus),
-                format_func=lambda slug: str(localities.loc[localities["slug"].astype(str) == slug, "name"].iloc[0]),
-                key=side_widget_key)
-            focus = localities.loc[localities["slug"].astype(str) == side_slug].iloc[0]
-            try:
-                focus_doc = load_area_dna(str(focus["slug"]), str(focus.get("mongodb_id") or "")) or {}
-            except Exception:
-                focus_doc = {}
-            real = focus_doc.get("real_estate", {}) if isinstance(focus_doc, dict) else {}
-            infra = focus_doc.get("infrastructure", {}) if isinstance(focus_doc, dict) else {}
-            future = focus_doc.get("future_potential", {}) if isinstance(focus_doc, dict) else {}
-            gaps = focus_doc.get("gap_analysis", {}) if isinstance(focus_doc, dict) else {}
-            quality_label = focus_doc.get("meta", {}).get("data_quality", "not specified") if isinstance(focus_doc, dict) else "not specified"
-            st.markdown(f"#### {html.escape(str(focus['name']))}")
-            st.caption(f"Data quality: {quality_label} · hover map pins for individual records")
-            side_metrics = st.columns(2)
-            side_metrics[0].metric("Locality score", f"{float(focus['composite_score']):.1f}/10" if pd.notna(focus["composite_score"]) else "Not scored", border=True)
-            side_metrics[1].metric("Connectivity", f"{float(focus['connectivity_score']):.1f}/10" if pd.notna(focus["connectivity_score"]) else "Not scored", border=True)
-            side_metrics[0].metric("Apartment ask", f"₹{float(real['avg_sale_psf_apartment']):,.0f}/sq ft" if isinstance(real, dict) and real.get("avg_sale_psf_apartment") else "Not stored", border=True)
-            trend = real.get("price_trend_pct_6m") if isinstance(real, dict) else None
-            side_metrics[1].metric("6-month trend", f"{float(trend):+.1f}%" if trend is not None else "Not stored", border=True)
-            if selected_marker:
-                marker_name = html.escape(str(selected_marker.get("name", "Map feature")))
-                marker_detail = str(selected_marker.get("detail", "No additional detail available.")).replace("<br>", " · ").replace("<br/>", " · ")
-                st.info(f"**Selected map feature** · {marker_name}\n\n{marker_detail}", icon=":material/pin_drop:")
-            if locked_in_market:
-                demo_identity = f"project:{int(selected_property['id'])}" if selected_property is not None else f"locality:{focus['slug']}"
-                age_seed = int(hashlib.sha256(f"{demo_identity}:representative-age:intelligence_demo".encode()).hexdigest()[:8], 16)
-                building_age = 1 + age_seed % 35
-                def score_label(value, fallback):
-                    try:
-                        score = float(value) if pd.notna(value) else fallback
-                        score = score / 10 if score > 10 else score
-                        return f"{max(0, min(10, score)):.1f}/10" + ("" if pd.notna(value) else " · demo")
-                    except (TypeError, ValueError):
-                        return f"{fallback:.1f}/10 · demo"
-                score_cols = st.columns(3)
-                score_cols[0].metric("Lifestyle", score_label(focus.get("lifestyle_score"), 6.5), border=True)
-                score_cols[1].metric("Commute proxy", score_label(focus.get("connectivity_score"), 6.2), border=True)
-                score_cols[2].metric("Building age", f"{building_age} yrs · demo", border=True)
-                focus_pois = intelligence_demo_pois(float(focus["latitude"]), float(focus["longitude"]), radius_km, str(focus["slug"]))
-                st.markdown("**Nearest radius signals**")
-                poi_view = focus_pois[["category", "name", "distance_km", "source"]].rename(columns={
-                    "category": "Category", "name": "Demo place", "distance_km": "Distance km", "source": "Data source",
-                })
-                st.dataframe(poi_view, width="stretch", hide_index=True, height=270, alt=f"Synthetic nearest schools, hospitals, tech parks, fuel, airport, railway, malls and public transport around {focus['name']}")
-                st.caption("All eight place names and distances use synthetic `intelligence_demo` points and straight-line distance, not verified venues or travel times.")
-            else:
-                st.info("Lock an area to show the eight-category radius scan, demo building age, lifestyle and commute indicators.", icon=":material/lock_open:")
-            with st.expander("Infrastructure & future signals", expanded=False):
-                values = [f"{key.replace('_', ' ').title()}: {value}" for key, value in infra.items() if value is not None] if isinstance(infra, dict) else []
-                st.markdown("**Infrastructure**")
-                st.write(" · ".join(values[:4]) if values else "No stored infrastructure signals")
-                potential = (future.get("upcoming_metro_projects", []) + future.get("upcoming_infra_other", [])) if isinstance(future, dict) else []
-                st.markdown("**Future potential**")
-                st.write(" · ".join(str(item) for item in potential[:3]) if potential else "No stored pipeline items")
-                watch = (gaps.get("top_3_gaps") or gaps.get("missing_sectors") or []) if isinstance(gaps, dict) else []
-                if watch:
-                    st.markdown("**Watch items**")
-                    st.write(" · ".join(str(item) for item in watch[:3]))
-            with st.popover("✦ Ask PropClue about this area", type="primary", width="stretch"):
-                st.caption("Ask about legal/title evidence, bank approvals, radius amenities, or investment scenarios.")
-                show_assistant(db, user, city, with_header=False, floating=True)
-            st.session_state["assistant_map_context"] = {"name": str(focus["name"]), "project_name": str(selected_property["project_name"]) if selected_property is not None else "", "slug": str(focus["slug"]), "latitude": map_center_lat, "longitude": map_center_lon, "radius_km": float(radius_km)}
-            radius_slugs = set(nearby["slug"].astype(str))
-            radius_listings = matching_listings[matching_listings["locality_match_slug"].astype(str).isin(radius_slugs)].copy()
-            st.session_state["map_compare_context"] = {"market_slug": market_slug, "center_slug": center_slug, "radius_km": float(radius_km), "listing_ids": [int(value) for value in radius_listings["id"].dropna().tolist()], "locality_slugs": list(radius_slugs), "selected_types": list(selected_types)}
-            st.caption(f"{len(radius_listings):,} current-radius matches are carried to Compare & Save.")
+                score = float(value) if pd.notna(value) else fallback
+                score = score / 10 if score > 10 else score
+                return f"{max(0, min(10, score)):.1f}/10" + ("" if pd.notna(value) else " · demo")
+            except (TypeError, ValueError):
+                return f"{fallback:.1f}/10 · demo"
+        panel_metrics = [
+            {"label": "Lifestyle score", "value": score_text(focus.get("lifestyle_score"), 6.5)},
+            {"label": "Commute score · proxy", "value": score_text(focus.get("connectivity_score"), 6.2)},
+            {"label": "Building age", "value": f"{building_age} years · demo"},
+            {"label": "Locality score", "value": f"{float(focus['composite_score']):.1f}/10" if pd.notna(focus.get("composite_score")) else "Not stored"},
+        ]
+        if isinstance(real, dict):
+            panel_metrics += [
+                {"label": "Apartment ask", "value": f"₹{float(real['avg_sale_psf_apartment']):,.0f}/sq ft" if real.get("avg_sale_psf_apartment") else "Not stored"},
+                {"label": "6-month price trend", "value": f"{float(real['price_trend_pct_6m']):+.1f}%" if real.get("price_trend_pct_6m") is not None else "Not stored"},
+            ]
+        def component_records(frame, kind):
+            if frame is None or frame.empty:
+                return []
+            result = json.loads(frame.to_json(orient="records", date_format="iso"))
+            for item in result:
+                item["kind"] = kind
+            return result
+        poi_records = component_records(poi_panel, "amenity")
+        map_payload = {
+            "center_lat": map_center_lat, "center_lon": map_center_lon, "zoom": zoom,
+            "radius_km": radius_km if locked_in_market else 0,
+            "show_heatmap": show_heatmap,
+            "context_id": f"{market_slug}:{center_slug}:{locked_slug or ''}:{getattr(selected_property, 'id', '')}",
+            "localities": component_records(map_points, "locality"),
+            "projects": component_records(project_points, "project"),
+            "pois": poi_records,
+            "panel": {
+                "title": str(focus["name"]),
+                "subtitle": f"{'Area locked' if locked_in_market else 'Area preview'} · {radius_km:g} km radius · source quality: {quality_label}",
+                "metrics": panel_metrics,
+                "amenities": [{"category": str(row.category), "name": str(row.name), "distance": f"{float(row.distance_km):.1f}"} for row in poi_panel.itertuples(index=False)],
+                "note": "Hover over any locality, project or radius point to show its details here. Distances and places labeled intelligence_demo are synthetic, straight-line estimates.",
+            },
+        }
+        render_hover_map(data=map_payload, key=f"hover-map-{market_slug}-{center_slug}")
+        radius_anchor = str(selected_property["project_name"]) if selected_property is not None else str(center["name"])
+        st.caption(f"Radius centered on {radius_anchor}. Project coordinates are approximate locality offsets. Map hover updates the adjacent detail pane; map tiles are attributed to OpenStreetMap and CARTO.")
+        map_assist_col = st.columns([1, 2, 1])[1]
+        with map_assist_col.popover("✦ Ask PropClue about this area", type="primary", width="stretch"):
+            st.caption("Ask about legal/title evidence, bank approval, proximity, or investment scenarios.")
+            show_assistant(db, user, city, with_header=False, floating=True)
+        st.session_state["assistant_map_context"] = {"name": str(focus["name"]), "project_name": str(selected_property["project_name"]) if selected_property is not None else "", "slug": str(focus["slug"]), "latitude": map_center_lat, "longitude": map_center_lon, "radius_km": float(radius_km)}
 
     nearby_slugs = set(nearby["slug"].astype(str))
     radius_listings = matching_listings[matching_listings["locality_match_slug"].astype(str).isin(nearby_slugs)].copy()
