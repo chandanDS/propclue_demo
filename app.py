@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import pydeck as pdk
 import requests
 import streamlit as st
 from sqlalchemy import select, func
@@ -686,9 +687,12 @@ def locality_appreciation(db, locality_id: int) -> tuple[float | None, float | N
 def project_proximity(project: Project) -> dict[str, float]:
     """Stable illustrative distances; no route or POI provider is connected."""
     result = {}
-    for label, key in [("metro", "metro"), ("it_park", "IT park"), ("hospital", "hospital"),
-                       ("mall", "mall"), ("school", "school"), ("business_hub", "business hub"),
-                       ("eatery", "eatery")]:
+    for label, key in [
+        ("metro", "metro"), ("public_transport", "public transport"), ("it_park", "IT park"),
+        ("hospital", "hospital"), ("mall", "mall"), ("school", "school"),
+        ("petrol_bunk", "petrol bunk"), ("airport", "airport"),
+        ("railway_station", "railway station"), ("business_hub", "business hub"), ("eatery", "eatery"),
+    ]:
         digest = hashlib.sha256(f"{project.id}:{key}".encode()).hexdigest()
         result[label] = round(.4 + (int(digest[:8], 16) % 721) / 100, 1)
     return result
@@ -1181,6 +1185,254 @@ def distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 6371.0 * 2 * asin(sqrt(value))
 
 
+def property_map_points(listings: pd.DataFrame, localities: pd.DataFrame) -> pd.DataFrame:
+    """Return visible, deterministic listing circles around matched locality centroids.
+
+    The source catalogue does not contain project coordinates. These small offsets are
+    deliberately marked approximate and must never be treated as property addresses.
+    """
+    from math import cos, radians, sin
+
+    coords = {
+        str(row.slug): (float(row.latitude), float(row.longitude), str(row.name))
+        for row in localities.dropna(subset=["latitude", "longitude"]).itertuples(index=False)
+    }
+    colors = {
+        "residential": [20, 184, 166, 225],
+        "mixed_use": [249, 115, 22, 235],
+        "commercial": [37, 99, 235, 230],
+    }
+    records = []
+    for row in listings.itertuples(index=False):
+        slug = getattr(row, "locality_match_slug", None)
+        if not slug or str(slug) not in coords:
+            continue
+        lat, lon, locality_name = coords[str(slug)]
+        digest = hashlib.sha256(f"listing-map:{getattr(row, 'id', row.project_name)}".encode()).hexdigest()
+        angle = int(digest[:8], 16) / 0xFFFFFFFF * 6.283185307179586
+        offset_km = 0.08 + (int(digest[8:12], 16) % 44) / 100
+        point_lat = lat + (offset_km * cos(angle)) / 111.32
+        point_lon = lon + (offset_km * sin(angle)) / max(111.32 * cos(radians(lat)), 1)
+        project_name = str(getattr(row, "project_name", "Project listing"))
+        builder = str(getattr(row, "builder_name", None) or "Builder not provided")
+        project_type = str(getattr(row, "project_type", "") or "").casefold().replace(" ", "_")
+        minimum, maximum = getattr(row, "price_min", None), getattr(row, "price_max", None)
+        price = "–".join(money(value, True) for value in (minimum, maximum) if pd.notna(value)) or "Not listed"
+        status = str(getattr(row, "construction_status", None) or "Not provided").replace("_", " ").title()
+        rera = str(getattr(row, "rera_number", None) or "Not provided")
+        building_age = 1 + (int(digest[12:16], 16) % 35)
+        detail = (
+            f"<b>{html.escape(project_name)}</b><br>Builder: {html.escape(builder)}"
+            f"<br>Locality: {html.escape(locality_name)}<br>Listed range: {html.escape(price)}"
+            f"<br>Stage: {html.escape(status)}<br>RERA reference: {html.escape(rera)}"
+            f"<br>Bank approval: not verified<br>Building age: {building_age} years · intelligence_demo"
+            "<br>Marker is an approximate locality-offset demo coordinate"
+        )
+        records.append({
+            "listing_id": int(getattr(row, "id", 0)), "latitude": point_lat, "longitude": point_lon, "name": project_name,
+            "detail": detail, "radius_px": 20,
+            "fill_color": colors.get(project_type, [99, 102, 241, 220]),
+            "locality": locality_name, "building_age_demo": building_age,
+            "price_range": price, "project_type": project_type,
+        })
+    return pd.DataFrame(records)
+
+
+def intelligence_demo_pois(latitude: float, longitude: float, radius_km: float, area_slug: str) -> pd.DataFrame:
+    """Create clearly synthetic POI stand-ins for radius-map UX development."""
+    from math import cos, radians, sin
+
+    catalog = [
+        ("School", "School campus"), ("Hospital", "Hospital cluster"),
+        ("Tech park", "Business / technology campus"), ("Petrol bunk", "Fuel station"),
+        ("Airport", "Airport access point"), ("Railway station", "Rail station"),
+        ("Mall", "Retail and mall hub"), ("Public transport", "Metro / bus interchange"),
+    ]
+    colors = {
+        "School": [59, 130, 246, 230], "Hospital": [239, 68, 68, 235],
+        "Tech park": [139, 92, 246, 235], "Petrol bunk": [245, 158, 11, 235],
+        "Airport": [15, 118, 110, 235], "Railway station": [217, 70, 239, 235],
+        "Mall": [236, 72, 153, 235], "Public transport": [14, 165, 233, 235],
+    }
+    radius = max(0.5, float(radius_km))
+    records = []
+    for index, (category, label) in enumerate(catalog):
+        digest = hashlib.sha256(f"{area_slug}:intelligence_demo:{category}".encode()).hexdigest()
+        fraction = 0.14 + (int(digest[:8], 16) % 7400) / 10000
+        distance = min(radius * fraction, radius * 0.96)
+        bearing = int(digest[8:16], 16) / 0xFFFFFFFF * 6.283185307179586
+        lat = latitude + (distance * cos(bearing)) / 111.32
+        lon = longitude + (distance * sin(bearing)) / max(111.32 * cos(radians(latitude)), 1)
+        name = f"{label} {index + 1:02d} · intelligence_demo"
+        records.append({
+            "latitude": lat, "longitude": lon, "name": name, "category": category,
+            "distance_km": round(distance, 1), "radius_px": 10, "fill_color": colors[category],
+            "detail": (
+                f"<b>{html.escape(category)}</b><br>{html.escape(name)}"
+                f"<br>{distance:.1f} km straight-line from {html.escape(area_slug)}"
+                "<br>Source: synthetic intelligence_demo · not a real venue or route"
+            ),
+            "source": "intelligence_demo · synthetic",
+        })
+    return pd.DataFrame(records).sort_values("distance_km").reset_index(drop=True)
+
+
+def render_circle_map(
+    center_lat: float, center_lon: float, zoom: float, radius_km: float,
+    localities: pd.DataFrame | None = None, projects: pd.DataFrame | None = None,
+    pois: pd.DataFrame | None = None, height: int = 500, alt: str = "Property and locality map",
+) -> None:
+    """Render stable pixel-sized circles with hover cards, plus a radius boundary."""
+    layers = []
+    radius_frame = pd.DataFrame([{"latitude": center_lat, "longitude": center_lon, "radius_m": radius_km * 1000}])
+    layers.append(pdk.Layer(
+        "ScatterplotLayer", data=radius_frame, get_position="[longitude, latitude]",
+        get_radius="radius_m", radius_units="meters", stroked=True, filled=False,
+        get_line_color=[13, 148, 136, 155], line_width_min_pixels=2,
+        pickable=False, auto_highlight=False,
+    ))
+    if localities is not None and not localities.empty:
+        layers.append(pdk.Layer(
+            "ScatterplotLayer", data=localities, get_position="[longitude, latitude]",
+            get_radius=9, radius_units="pixels", radius_min_pixels=8, radius_max_pixels=13,
+            get_fill_color="fill_color", stroked=True, get_line_color=[255, 255, 255, 235],
+            line_width_min_pixels=1, pickable=True, auto_highlight=True,
+        ))
+    if projects is not None and not projects.empty:
+        layers.append(pdk.Layer(
+            "ScatterplotLayer", data=projects, get_position="[longitude, latitude]",
+            get_radius="radius_px", radius_units="pixels", radius_min_pixels=16, radius_max_pixels=24,
+            get_fill_color="fill_color", stroked=True, get_line_color=[255, 255, 255, 245],
+            line_width_min_pixels=2, pickable=True, auto_highlight=True,
+        ))
+    if pois is not None and not pois.empty:
+        layers.append(pdk.Layer(
+            "ScatterplotLayer", data=pois, get_position="[longitude, latitude]",
+            get_radius="radius_px", radius_units="pixels", radius_min_pixels=9, radius_max_pixels=13,
+            get_fill_color="fill_color", stroked=True, get_line_color=[255, 255, 255, 255],
+            line_width_min_pixels=2, pickable=True, auto_highlight=True,
+        ))
+    deck = pdk.Deck(
+        layers=layers,
+        initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=0),
+        tooltip={"html": "{detail}", "style": {"backgroundColor": "#0c213c", "color": "#f5f8fc", "fontSize": "12px", "padding": "10px", "maxWidth": "330px"}},
+        map_style="light",
+    )
+    st.pydeck_chart(deck, width="stretch", height=height, alt=alt)
+
+
+def demo_property_rating(
+    lifestyle_score: object, commute_score: object, building_age: int, pois: pd.DataFrame,
+) -> tuple[float, pd.DataFrame]:
+    """Explainable 10-point demonstration rating; proximity features are simulated."""
+    def score_10(value: object, fallback: float) -> float:
+        try:
+            if pd.notna(value):
+                numeric = float(value)
+                return max(0.0, min(10.0, numeric / 10 if numeric > 10 else numeric))
+        except (TypeError, ValueError):
+            pass
+        return fallback
+
+    lifestyle = score_10(lifestyle_score, 6.5)
+    commute = score_10(commute_score, 6.2)
+    age_score = max(2.5, min(9.5, 10 - max(0, building_age - 3) * 0.22))
+    mean_distance = float(pd.to_numeric(pois.get("distance_km", pd.Series(dtype=float)), errors="coerce").dropna().mean()) if not pois.empty else 12.0
+    poi_avg = max(2.0, min(10.0, 9.0 - mean_distance * 0.22))
+    components = [
+        ("School, hospital, tech park, fuel, airport, rail, mall & transit proximity", poi_avg, 35, "Synthetic intelligence_demo POI distances"),
+        ("Lifestyle score", lifestyle, 20, "PostgreSQL locality score" if lifestyle_score is not None and pd.notna(lifestyle_score) else "Demo fallback"),
+        ("Commute score", commute, 20, "Connectivity score used as a commute proxy"),
+        ("Representative building age", age_score, 15, f"Synthetic {building_age}-year age · intelligence_demo"),
+        ("Builder construction warranty", 5.0, 10, "Warranty not connected; neutral placeholder, no builder warranty claim"),
+    ]
+    rating = round(sum(score * weight for _, score, weight, _ in components) / sum(weight for _, _, weight, _ in components), 1)
+    table = pd.DataFrame([
+        {"Signal": label, "Score / 10": f"{score:.1f}", "Weight": f"{weight}%", "Evidence": evidence}
+        for label, score, weight, evidence in components
+    ])
+    return rating, table
+
+
+def render_area_project_brief(
+    name: str, lifestyle_score: object, commute_score: object, building_age: int,
+    pois: pd.DataFrame, scope_label: str = "Area / Project Brief",
+) -> float:
+    rating, components = demo_property_rating(lifestyle_score, commute_score, building_age, pois)
+    with st.container(border=True):
+        st.markdown(f"#### {scope_label} · {name}")
+        cols = st.columns(5)
+        cols[0].metric("Demo property rating", f"{rating:.1f}/10", border=True, help="Weighted prototype score using the breakdown below; it is not an investment, safety, or legal rating.")
+        cols[1].metric("Lifestyle score", f"{float(lifestyle_score):.1f}/10" if lifestyle_score is not None and pd.notna(lifestyle_score) else "Demo 6.5/10", border=True)
+        cols[2].metric("Commute score", f"{float(commute_score):.1f}/10" if commute_score is not None and pd.notna(commute_score) else "Proxy 6.2/10", border=True, help="Connectivity score is used as a commute proxy; no route-time service is connected.")
+        cols[3].metric("Representative building age", f"{building_age} years · demo", border=True)
+        cols[4].metric("Builder warranty", "Not verified", border=True, help="No construction-quality warranty document or builder warranty feed is connected.")
+        if not pois.empty:
+            poi_view = pois[["category", "name", "distance_km", "source"]].rename(columns={
+                "category": "Nearby category", "name": "Nearest demo point", "distance_km": "Straight-line km", "source": "Data label",
+            })
+            st.dataframe(poi_view, width="stretch", hide_index=True, alt=f"Nearby amenity and transit demo points around {name}")
+            st.caption("Hover the colored map circles for category and distance. Nearby place names and coordinates are synthetic `intelligence_demo` stand-ins, not real venues or routes.")
+        st.dataframe(components, width="stretch", hide_index=True, alt=f"Explainable demo property rating breakdown for {name}")
+        st.caption("Rating method: weighted mean out of 10. Proximity 35%, lifestyle 20%, commute proxy 20%, building age 15%, builder warranty 10%. Missing warranty uses a neutral placeholder and remains unverified; proximity, representative building age and fallback scores are synthetic.")
+    return rating
+
+
+def render_property_legal_and_returns(project_name: str, price_min: object, price_max: object, rental_yield: object = None) -> None:
+    """Show per-property verification coverage and clearly illustrative return horizons."""
+    with st.container(border=True):
+        st.markdown("#### Legal, title & bank checks")
+        st.caption(f"Property: **{project_name}** · status reflects connected evidence only.")
+        legal_rows = [
+            ("Title chain / encumbrance certificate", "Not connected"),
+            ("Khata / tax receipts / technical clearance", "Not connected"),
+            ("RERA reference", "Reference presence only; not verified"),
+            ("Bank approval / bank letter", "Not verified; no letter attached"),
+        ]
+        st.dataframe(pd.DataFrame(legal_rows, columns=["Check", "Status"]), width="stretch", hide_index=True, alt=f"Legal and bank evidence status for {project_name}")
+        with st.expander("Legal support contact"):
+            st.write("**Assigned lawyer:** Not onboarded")
+            st.write("**Practice focus:** Property title, encumbrance, Khata and registration review")
+            st.write("**Bar Council enrollment, jurisdiction and contact:** Not provided or verified")
+            st.caption("A lawyer directory is not connected. PropClue will show a named counsel only after identity and credentials are verified; this screen does not invent a real lawyer profile.")
+        st.info("PropClue supports the buyer journey through ownership/registration confirmation. This demo does not verify legal completion, bank sanction or registration; confirm those with the issuing authority and your lawyer.", title="Support through ownership")
+
+    try:
+        low = float(price_min) if pd.notna(price_min) else None
+        high = float(price_max) if pd.notna(price_max) else None
+    except (TypeError, ValueError):
+        low = high = None
+    if low is None and high is None:
+        st.info("Investment horizons are unavailable because this property has no asking-price value in the connected source.")
+        return
+    current_price = ((low if low is not None else high) + (high if high is not None else low)) / 2
+    yield_default = 3.0
+    try:
+        if rental_yield is not None and pd.notna(rental_yield):
+            yield_default = max(0.0, min(12.0, float(rental_yield)))
+    except (TypeError, ValueError):
+        pass
+    st.markdown("#### Rental income & investment outlook · scenario model")
+    st.caption("Illustrative gross scenario, not a forecast or investment advice. Rent yield and annual price growth are editable assumptions; excludes vacancy, taxes, fees, financing, maintenance and sale costs.")
+    inputs = st.columns(2)
+    rent_yield = inputs[0].slider("Gross rent yield assumption (%)", 0.0, 12.0, float(round(yield_default, 1)), 0.1, key=f"return-yield-{hashlib.sha1(project_name.encode()).hexdigest()[:8]}")
+    price_growth = inputs[1].slider("Annual property value change assumption (%)", -5.0, 15.0, 5.0, 0.5, key=f"return-growth-{hashlib.sha1(project_name.encode()).hexdigest()[:8]}")
+    rows = []
+    for years in (1, 3, 5):
+        estimated_value = current_price * (1 + price_growth / 100) ** years
+        gross_rent = current_price * rent_yield / 100 * years
+        gross_total = estimated_value + gross_rent
+        total_return = (gross_total / current_price - 1) * 100
+        rows.append({
+            "Horizon": f"{years} year{'s' if years > 1 else ''}",
+            "Indicative value": money(estimated_value, True),
+            "Cumulative gross rent": money(gross_rent, True),
+            "Illustrative gross return": f"{total_return:+.1f}%",
+        })
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True, alt=f"Illustrative 1, 3 and 5 year return scenarios for {project_name}")
+    st.caption("Scenario uses the midpoint of the stored asking range. If a rental yield is stored in MongoDB, it supplies the starting assumption; otherwise the demo starts at 3%. Stored inputs may be estimates and are not independently verified.")
+
+
 def make_hsr_zoomin_demo(center_lat: float, center_lon: float) -> pd.DataFrame:
     """Deterministic illustrative parcel/building shapes; never treated as source GIS."""
     from math import cos, radians
@@ -1392,7 +1644,16 @@ def show_area_agent_report(db, user: User, area: pd.Series, doc: dict,
 def show_map(db, user: User, city: str, show_header: bool = True):
     """Interactive locality map, isolated HSR building prototype, and area agent review."""
     if show_header:
-        top_header("Map explorer", "Zoom from district context to locality signals, then switch to the HSR building-block demo when you need parcel-scale detail.")
+        top_header("Map intelligence", "Explore a market spatially. Lock an area to see nearby signals, project context and an evidence-aware assistant.")
+        st.markdown("""
+        <style>
+        .pc-map-intro{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem 1.2rem;margin:.25rem 0 1rem;border:1px solid rgba(14,116,109,.17);border-radius:18px;background:linear-gradient(115deg,rgba(13,148,136,.09),rgba(255,255,255,.96) 54%,rgba(245,158,11,.08));box-shadow:0 8px 26px rgba(15,35,58,.05)}
+        .pc-map-intro h3{margin:0;color:#102a43;font-size:1.12rem;letter-spacing:-.02em}.pc-map-intro p{margin:.25rem 0 0;color:#60758a;font-size:.88rem}
+        .pc-map-badges{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:.45rem}.pc-map-badge{border:1px solid #dce8ed;border-radius:999px;background:rgba(255,255,255,.9);padding:.35rem .65rem;color:#38536b;font-size:.76rem;font-weight:700;white-space:nowrap}.pc-map-badge.live{color:#087e70;background:#e9f8f4;border-color:#c8ebe2}.pc-map-badge.demo{color:#9a5a06;background:#fff6e5;border-color:#f5dfae}
+        .pc-map-context{padding:.95rem 1.1rem;border-radius:16px;background:#0c213c;color:#f4f8fb;box-shadow:0 14px 35px rgba(12,33,60,.15);margin:.6rem 0 1rem}.pc-map-context small{display:block;color:#a9c4d4;letter-spacing:.08em;text-transform:uppercase;font-weight:700;font-size:.69rem}.pc-map-context strong{display:block;font-size:1.12rem;margin:.15rem 0}.pc-map-context span{color:#cfdae3;font-size:.86rem}
+        </style>
+        <div class="pc-map-intro"><div><h3>PropClue Spatial Intelligence</h3><p>Search a market, lock a locality, then explore projects and amenity signals around it.</p></div><div class="pc-map-badges"><span class="pc-map-badge live">● Live project catalogue</span><span class="pc-map-badge demo">● Approximate map points</span><span class="pc-map-badge demo">● Demo radius places</span></div></div>
+        """, unsafe_allow_html=True)
     market_slug = st.session_state.get("market_slug", "")
     try:
         all_localities, all_listings = load_catalog()
@@ -1416,6 +1677,10 @@ def show_map(db, user: User, city: str, show_header: bool = True):
         map_modes.append("HSR building demo · zoomedin_demo")
     map_mode = st.segmented_control("Map layer", map_modes, default=map_modes[0], key="map-layer-mode-v2")
     zoomedin_demo_mode = map_mode == "HSR building demo · zoomedin_demo"
+    locked_slug = st.session_state.get("locked_area_slug")
+    if locked_slug in set(locality_slugs):
+        # Keep the selected locality, map center, radius layer and assistant context in sync.
+        st.session_state["live-map-center-v3"] = str(locked_slug)
     preferred_center = max(locality_slugs, key=lambda slug: listing_counts_all.get(slug, 0))
     if zoomedin_demo_mode:
         center_slug = hsr_slug
@@ -1437,7 +1702,6 @@ def show_map(db, user: User, city: str, show_header: bool = True):
         st.session_state.pop("locked_area_slug", None)
         st.session_state.pop("locked_area_name", None)
         st.session_state.pop("area_agent_review", None)
-    locked_slug = st.session_state.get("locked_area_slug")
     locked_in_market = bool(locked_slug and locked_slug in set(locality_slugs))
     if locked_in_market:
         locked_name = localities.loc[localities["slug"] == locked_slug, "name"]
@@ -1481,6 +1745,7 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     else:
         matching_listings = matching_listings.iloc[0:0]
 
+    locked_row = None
     if locked_in_market:
         locked_row = localities.loc[localities["slug"] == locked_slug].iloc[0]
         try:
@@ -1536,6 +1801,14 @@ def show_map(db, user: User, city: str, show_header: bool = True):
         if not values.empty:
             listing_price_ranges[str(slug)] = f" · listed {money(values.min(), True)}–{money(values.max(), True)}"
     map_points["detail"] = map_points.apply(lambda row: row["detail"] + listing_price_ranges.get(str(row["slug"]), " · no listed price"), axis=1)
+    map_points["name"] = map_points["name"].astype(str)
+    project_map_source = matching_listings[matching_listings["locality_match_slug"].astype(str).isin(set(nearby["slug"].astype(str)))].copy()
+    project_points = property_map_points(project_map_source, nearby)
+    poi_points = pd.DataFrame()
+    if locked_in_market and locked_row is not None:
+        poi_points = intelligence_demo_pois(
+            float(locked_row["latitude"]), float(locked_row["longitude"]), radius_km, str(locked_row["slug"])
+        )
     clicked_slug = None
     clicked_demo_parcel = None
     if zoomedin_demo_mode:
@@ -1550,16 +1823,30 @@ def show_map(db, user: User, city: str, show_header: bool = True):
                             alt="Zoomable HSR synthetic building-block map with hover details for each sample parcel")
             st.caption("Land use colors: residential (teal), mixed use (orange), commercial (blue). Each parcel is a generated polygon; the smaller gold inset is a sample building footprint. Hover for asking price, floors, units, absorption and trend. Drag to zoom and use the toolbar to reset.")
     else:
-        st.map(map_points, latitude="latitude", longitude="longitude", color="map_color", size="map_size",
-               zoom=int(zoom), width="stretch", height=570,
-               alt=f"Live locality map for {center['city']} with locality points inside a {radius_km} km radius")
-        st.caption(f"Map shows locality centroids within {radius_km} km of {center['name']}. Search radius filters the map and the coverage table below.")
+        st.markdown(
+            f'<div class="pc-map-context"><small>Area lens · {radius_km} km radius</small><strong>{html.escape(str(locked_row["name"] if locked_in_market and locked_row is not None else center["name"]))}</strong><span>{"Area locked · amenity points and analysis are scoped to this locality." if locked_in_market else "Lock this locality to reveal a radius of schools, healthcare, work hubs, transit and lifestyle signals."}</span></div>',
+            unsafe_allow_html=True,
+        )
+        render_circle_map(
+            float(center["latitude"]), float(center["longitude"]), float(zoom), float(radius_km),
+            localities=map_points, projects=project_points, pois=poi_points if not poi_points.empty else None,
+            height=570,
+            alt=f"Map of {center['city']} with visible approximate property circles, locality markers, and radius amenity points",
+        )
+        st.caption(f"The teal ring shows the {radius_km} km straight-line radius around {center['name']}. Property circles are approximate locality-offset demo coordinates because exact project coordinates are not in the source catalogue. Hover property and amenity circles for details.")
+        st.markdown("<div class='pc-map-badges' style='justify-content:flex-start;margin:.5rem 0 1rem'><span class='pc-map-badge' style='color:#0d9488'>● Project circles</span><span class='pc-map-badge' style='color:#e99b13'>● Selected locality</span><span class='pc-map-badge' style='color:#5b8def'>● Radius amenities</span><span class='pc-map-badge'>◌ Search boundary</span></div>", unsafe_allow_html=True)
+        # Keep the assistant entry point beside the map so it reads as a map tool.
+        map_assist_col = st.columns([1, 2, 1])[1]
+        with map_assist_col.popover("✦  Ask PropClue about this area", type="primary", width="stretch", help="Discuss property details, nearby signals, legal evidence, bank status or investment scenarios for the selected map area"):
+            st.markdown("#### Your area, in context")
+            st.caption("Ask about nearby schools, hospitals, tech parks, petrol bunks, airport, railway, malls and public transport. You can also ask about legal/title evidence, bank approval or 1/3/5-year scenarios.")
+            show_assistant(db, user, city, with_header=False, floating=True)
     radius_table = nearby.sort_values("distance_km").head(15).copy()
     if not radius_table.empty:
         radius_table["Project records"] = radius_table["slug"].map(listing_counts).fillna(0).astype(int)
         st.markdown(f"**Radius coverage · nearest {len(radius_table)} locality records**")
         st.dataframe(radius_table[["name", "distance_km", "Project records", "composite_score", "connectivity_score"]].rename(columns={"name":"Locality", "distance_km":"Distance km", "composite_score":"Area score / 10", "connectivity_score":"Connectivity / 10"}), width="stretch", hide_index=True, height=280, alt="Nearest locality scores and exact matched project counts inside the radius search")
-    focus_slug = clicked_slug if clicked_slug in set(localities["slug"]) else center_slug
+    focus_slug = clicked_slug if clicked_slug in set(localities["slug"]) else (str(locked_slug) if locked_in_market else center_slug)
     focus = localities.loc[localities["slug"] == focus_slug].iloc[0]
     nearby_slugs = set(nearby["slug"])
     radius_listings = matching_listings[matching_listings["locality_match_slug"].isin(nearby_slugs)].copy()
@@ -1582,8 +1869,8 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     future = focus_doc.get("future_potential", {}) if isinstance(focus_doc, dict) else {}
     gaps = focus_doc.get("gap_analysis", {}) if isinstance(focus_doc, dict) else {}
     market = focus_doc.get("real_estate", {}) if isinstance(focus_doc, dict) else {}
-    st.markdown(f"### {focus['name']} · locality intelligence")
-    st.caption("Hover pins for distance, exact matched project count and locality score. Grey pins still show area coverage even when a listing is not matched.")
+    st.markdown(f"### Area / Project Brief · {focus['name']}")
+    st.caption("Hover property circles for listing, bank-evidence and approximate age details. Hover amenity circles for the nearest radius signals. Grey locality circles still show coverage without an exact listing match.")
     quality_label = focus_doc.get("meta", {}).get("data_quality", "not specified") if isinstance(focus_doc, dict) else "not specified"
     intel_cols = st.columns(5)
     intel_cols[0].metric("Area score", f"{float(focus['composite_score']):.1f}/10" if pd.notna(focus["composite_score"]) else "Not scored", border=True)
@@ -1592,6 +1879,18 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     trend = market.get("price_trend_pct_6m") if isinstance(market, dict) else None
     intel_cols[3].metric("6-month price trend", f"{float(trend):+.1f}%" if trend is not None else "Not stored", border=True)
     intel_cols[4].metric("Matched active projects", f"{int(focus.get('matching_listings', 0)):,}", border=True)
+    focus_pois = intelligence_demo_pois(float(focus["latitude"]), float(focus["longitude"]), radius_km, str(focus["slug"]))
+    age_seed = int(hashlib.sha256(f"{focus['slug']}:representative-age:intelligence_demo".encode()).hexdigest()[:8], 16)
+    representative_age = 1 + age_seed % 35
+    st.session_state["assistant_map_context"] = {
+        "name": str(focus["name"]), "slug": str(focus["slug"]),
+        "latitude": float(focus["latitude"]), "longitude": float(focus["longitude"]),
+        "radius_km": float(radius_km),
+    }
+    render_area_project_brief(
+        str(focus["name"]), focus.get("lifestyle_score"), focus.get("connectivity_score"),
+        representative_age, focus_pois, scope_label="Area / Project Brief · radius and quality signals",
+    )
     project_tailwinds = []
     if isinstance(future, dict):
         project_tailwinds += [str(x) for x in future.get("upcoming_metro_projects", [])]
@@ -1682,15 +1981,30 @@ def show_map(db, user: User, city: str, show_header: bool = True):
             selected_listing = focus_listings.loc[focus_listings["id"] == selected_listing_id].iloc[0]
             st.caption(f"**{selected_listing['project_name']}** · {selected_listing['builder_name'] or 'Builder not provided'} · {selected_listing['address'] or 'Address not provided'}")
             details = focus_listings[["project_name", "builder_name", "project_type", "price_min", "price_max", "rera_number", "address", "source", "updated_at"]].copy()
+            details["Bank approval"] = "Not verified · no letter attached"
             details["Price range"] = details.apply(
                 lambda row: "–".join(money(value, True) for value in [row["price_min"], row["price_max"]] if pd.notna(value)) or "Not listed",
                 axis=1,
             )
-            details = details[["project_name", "builder_name", "project_type", "Price range", "rera_number", "address", "source", "updated_at"]].rename(columns={
+            details = details[["project_name", "builder_name", "project_type", "Price range", "rera_number", "Bank approval", "address", "source", "updated_at"]].rename(columns={
                 "project_name": "Project", "builder_name": "Builder", "project_type": "Type", "rera_number": "RERA reference",
                 "address": "Stored address", "source": "Source", "updated_at": "Updated",
             })
             st.dataframe(details, width="stretch", hide_index=True, height=280, alt=f"Live PropClue listings associated with {focus['name']}")
+            try:
+                focus_doc_for_project = load_area_dna(str(selected_listing.get("locality_match_slug") or "")) or {}
+            except Exception:
+                focus_doc_for_project = {}
+            proj_real_estate = focus_doc_for_project.get("real_estate", {}) if isinstance(focus_doc_for_project, dict) else {}
+            project_age = 1 + int(hashlib.sha256(f"listing-map:{int(selected_listing['id'])}".encode()).hexdigest()[12:16], 16) % 35
+            render_area_project_brief(
+                str(selected_listing["project_name"]), focus.get("lifestyle_score"), focus.get("connectivity_score"),
+                project_age, focus_pois, scope_label="Property Brief · final demo rating",
+            )
+            render_property_legal_and_returns(
+                str(selected_listing["project_name"]), selected_listing.get("price_min"),
+                selected_listing.get("price_max"), proj_real_estate.get("rental_yield") if isinstance(proj_real_estate, dict) else None,
+            )
     with right:
         st.markdown("#### Compare localities")
         compare_options = nearby.sort_values("distance_km").drop_duplicates("slug")
@@ -2235,6 +2549,40 @@ def assistant_answer(db, user: User, city: str, question: str) -> str:
 
     asked_for_details = any(term in q for term in ("details", "detail", "information", "tell me about", "specification", "specs", "property info", "project info", "full info", "more about"))
     matched_project, exact_match = project_match(q)
+    nearby_terms = ("nearby", "nearest", "radius", "school", "hospital", "tech park", "petrol", "airport", "railway", "mall", "transport", "metro")
+    if any(term in q for term in nearby_terms):
+        ctx = st.session_state.get("assistant_map_context")
+        if isinstance(ctx, dict):
+            nearby_pois = intelligence_demo_pois(float(ctx["latitude"]), float(ctx["longitude"]), float(ctx.get("radius_km", 10)), str(ctx["slug"]))
+            if any(token in q for token in ("school", "hospital", "tech", "petrol", "airport", "railway", "mall", "transport", "metro")):
+                matches = nearby_pois[nearby_pois["category"].map(lambda category: str(category).casefold() in q or (category == "Public transport" and any(k in q for k in ("metro", "bus", "transit", "transport"))))]
+            else:
+                matches = nearby_pois
+            if matches.empty:
+                matches = nearby_pois
+            lines = [f"- **{row.category}:** {row.name} · {row.distance_km:.1f} km straight-line" for row in matches.itertuples(index=False)]
+            return (f"Radius scan around **{ctx['name']}** · {float(ctx.get('radius_km', 10)):.0f} km.\n\n"
+                    + "\n".join(lines)
+                    + "\n\nThese `intelligence_demo` points are synthetic stand-ins, not verified venues or travel routes. Check the map hover cards for each point.")
+        return "Open Map Explorer and lock an area first. I can then summarize the selected radius. Nearby points are currently synthetic intelligence_demo placeholders, not verified venues or routes."
+    if any(term in q for term in ("investment", "worthwhile", "worth it", "return", "roi", "1 year", "3 year", "5 year", "1y", "3y", "5y")):
+        investment_project = matched_project
+        if not investment_project:
+            selected_id = st.session_state.get("selected_project")
+            investment_project = db.get(Project, selected_id) if selected_id else None
+        if investment_project:
+            rent_yield = investment_project.monthly_rent * 12 / max(investment_project.asking_price, 1) * 100
+            rows = []
+            for years in (1, 3, 5):
+                value = investment_project.asking_price * 1.05 ** years
+                gross_rent = investment_project.asking_price * rent_yield / 100 * years
+                total_return = ((value + gross_rent) / max(investment_project.asking_price, 1) - 1) * 100
+                rows.append(f"- **{years} year{'s' if years > 1 else ''}:** illustrative value {money(value, True)} · gross rent {money(gross_rent, True)} · combined return {total_return:+.1f}%")
+            return (f"### {investment_project.name} · illustrative investment scenario\n"
+                    f"Assumptions: 5% annual value growth and {rent_yield:.1f}% gross rent yield from a synthetic demo record.\n\n"
+                    + "\n".join(rows)
+                    + "\n\nThis is not a forecast or investment recommendation. It excludes vacancy, taxes, transaction fees, financing, maintenance and resale costs; live rent and transaction histories are not connected.")
+        return "Select a property or name a project and I can show an illustrative 1, 3 and 5 year scenario. It is not a forecast or investment recommendation."
     if matched_project and (asked_for_details or exact_match):
         p = matched_project
         psf = p.asking_price / max(p.area_sqft, 1)
@@ -2253,8 +2601,8 @@ def assistant_answer(db, user: User, city: str, question: str) -> str:
                 f"- **Demo rent / yield:** {money(p.monthly_rent)}/month · {yield_pct:.1f}%\n"
                 f"- **Stage / possession field:** {p.status} · {p.possession}\n- **Locality asking trend:** {trend}\n"
                 f"- **Project highlights:** {', '.join(project_usps(db, p))}\n- **Listed demo amenities:** {', '.join(amenities) if amenities else 'Not listed'}\n"
-                f"- **Illustrative distances:** Metro {proximity['metro']} km · IT park {proximity['it_park']} km · Hospital {proximity['hospital']} km · School {proximity['school']} km\n"
-                f"- **Legal / bank evidence:** EC, Khata, title, RERA, tax and technical clearances are not connected; bank approval is not verified.\n\n"
+                f"- **Illustrative distances:** School {proximity['school']} km · Hospital {proximity['hospital']} km · Tech park {proximity['it_park']} km · Petrol bunk {proximity['petrol_bunk']} km · Airport {proximity['airport']} km · Railway station {proximity['railway_station']} km · Mall {proximity['mall']} km · Public transport {proximity['public_transport']} km\n"
+                f"- **Legal / bank evidence:** EC, Khata, title, RERA, tax and technical clearances are not connected; bank approval is not verified and no bank letter is attached.\n\n"
                 "Prices, rent, trend, amenities and distances are synthetic demo fields. Verify project availability, documents, approvals and all commercial details independently.")
     if user.role == "builder":
         if "high intent" in q or "buyer" in q or "lead" in q:
@@ -2284,7 +2632,7 @@ def assistant_answer(db, user: User, city: str, question: str) -> str:
 def show_assistant(db, user: User, city: str, with_header: bool = True, floating: bool = False):
     if with_header:
         top_header("PropClue assistant", "Ask in plain language about a project, market trend, documents or nearby amenities.")
-    st.caption("Answers query the synthetic demo database. No external LLM is called; legal and bank checks are not connected.")
+    st.caption("Ask about a project’s legal/title checklist, whether bank approval is verified, nearby locations in the selected radius, or an illustrative 1/3/5-year investment scenario. The demo has no official legal or bank feed and calls no external LLM.")
     conv_key = f"conversation_id_{user.id}"
     if conv_key not in st.session_state:
         conversation = AIConversation(user_id=user.id, title="Demo property questions")
@@ -2307,7 +2655,7 @@ def show_assistant(db, user: User, city: str, with_header: bool = True, floating
             db.add_all([AIMessage(conversation_id=cid, role="user", content=question.strip()), AIMessage(conversation_id=cid, role="assistant", content=answer)])
             db.commit()
             st.rerun()
-        st.caption("Demo answers use synthetic data. Legal and bank checks are not verified.")
+        st.caption("Legal/title status and bank approval are reported only from attached evidence; none is connected in this demo. Nearby POIs and investment horizons are clearly labeled scenarios.")
         with st.expander("Try a prompt"):
             st.write("Properties under ₹10k/sq ft? · Details for Devanahalli Residences 42 · Is this property dispute-free? · Show EC and Khata status · What is the YoY appreciation? · What are this project's USPs?")
         return
@@ -2616,10 +2964,17 @@ def show_locality_intelligence(localities: pd.DataFrame, listings: pd.DataFrame,
             shown["map_size"] = shown["Project records"].map(lambda count: min(55, 18 + int(count) * 8)).astype(float)
             shown["map_color"] = shown.apply(lambda row: "#f59e0b" if row["slug"] == selected else ("#0d9488" if row["Project records"] else "#94a3b8"), axis=1)
             shown["hover_text"] = shown.apply(lambda row: f"{int(row['Project records'])} exactly matched active projects · composite score {float(row['composite_score']):.1f}/10" if pd.notna(row["composite_score"]) else f"{int(row['Project records'])} exactly matched active projects · score not available", axis=1)
-            st.map(shown, latitude="latitude", longitude="longitude", color="map_color", size="map_size",
-                   zoom=11, width="stretch", height=490,
-                   alt=f"Locality intelligence map centered on {area['name']}; pin size shows matched listing count")
-            st.caption("Selected locality is orange; areas with matching projects are teal; other locality centroids are grey. Pin size shows matched project count. Radius uses centroid distance, not road distance.")
+            shown["fill_color"] = shown.apply(lambda row: [245, 158, 11, 235] if row["slug"] == selected else ([13, 148, 136, 220] if row["Project records"] else [100, 116, 139, 155]), axis=1)
+            shown["name"] = shown["name"].astype(str)
+            shown["detail"] = shown.apply(lambda row: f"{row['name']} · {row['distance_km']:.1f} km · {int(row['Project records'])} project records · score {float(row['composite_score']):.1f}/10" if pd.notna(row["composite_score"]) else f"{row['name']} · {row['distance_km']:.1f} km · {int(row['Project records'])} project records · score unavailable", axis=1)
+            matched_slugs = set(shown["slug"].astype(str))
+            project_points = property_map_points(listings[listings["locality_match_slug"].astype(str).isin(matched_slugs)], shown)
+            render_circle_map(
+                float(area["latitude"]), float(area["longitude"]), 11, float(radius),
+                localities=shown, projects=project_points, height=490,
+                alt=f"Locality and approximate property circles around {area['name']} with hover details",
+            )
+            st.caption("Property circles use stable approximate offsets around matched locality centroids because the source has no project coordinates. Hover a property circle for the listing details. Selected locality is orange; radius uses straight-line distance, not travel time.")
             nearby_view = shown.sort_values("distance_km").head(12)
             st.dataframe(nearby_view[["name", "distance_km", "Project records", "composite_score", "connectivity_score"]].rename(columns={"name":"Locality", "distance_km":"Distance km", "Project records":"Matched projects", "composite_score":"Area score / 10", "connectivity_score":"Connectivity / 10"}), width="stretch", hide_index=True, height=260, alt="Nearest localities and score details represented on the radius map")
         else:
@@ -2902,7 +3257,8 @@ def show_source_catalog(db, market_slug: str | None = None, demo_city: str = "Be
     )
     display_listings["Type"] = display_listings["project_type"].fillna("Not provided").str.replace("_", " ").str.title()
     display_listings["Construction status"] = display_listings["construction_status"].fillna("Not provided").str.replace("_", " ").str.title()
-    listing_columns = ["project_name", "builder_name", "Type", "Locality", "Price range", "units", "Construction status", "possession_date", "RERA", "source", "data_confidence", "Updated"]
+    display_listings["Bank approval"] = "Not verified"
+    listing_columns = ["project_name", "builder_name", "Type", "Locality", "Price range", "units", "Construction status", "possession_date", "RERA", "Bank approval", "source", "data_confidence", "Updated"]
     listing_display = display_listings[listing_columns].rename(columns={
         "project_name": "Project", "builder_name": "Builder",
         "units": "Units stated", "construction_status": "Construction status", "possession_date": "Possession stated",
@@ -2941,7 +3297,27 @@ def show_source_catalog(db, market_slug: str | None = None, demo_city: str = "Be
                 url = listing.get(field)
                 if isinstance(url, str) and url.startswith("https://"):
                     col.link_button(label, url, width="stretch")
-            show_builder_score_panel(city_listings, listing, chosen_city_slug)
+            matched_slug = str(listing.get("locality_match_slug") or "")
+            listing_area = city_localities[city_localities["slug"].astype(str) == matched_slug]
+            listing_doc = {}
+            if matched_slug:
+                try:
+                    listing_doc = load_area_dna(matched_slug) or {}
+                except Exception:
+                    listing_doc = {}
+            real_estate = listing_doc.get("real_estate", {}) if isinstance(listing_doc, dict) else {}
+            if not listing_area.empty:
+                area_row = listing_area.iloc[0]
+                demo_pois = intelligence_demo_pois(float(area_row["latitude"]), float(area_row["longitude"]), 10, matched_slug)
+                age = 1 + int(hashlib.sha256(f"listing-map:{int(listing['id'])}".encode()).hexdigest()[12:16], 16) % 35
+                render_area_project_brief(
+                    str(listing["project_name"]), area_row.get("lifestyle_score"), area_row.get("connectivity_score"),
+                    age, demo_pois, scope_label="Area / Project Brief · final demo rating",
+                )
+            render_property_legal_and_returns(
+                str(listing["project_name"]), listing.get("price_min"), listing.get("price_max"),
+                real_estate.get("rental_yield") if isinstance(real_estate, dict) else None,
+            )
 
     st.markdown("#### Locality intelligence · linked to selected project")
     preferred_slug = str(listing["locality_match_slug"]) if listing is not None and pd.notna(listing.get("locality_match_slug")) else None
@@ -3005,6 +3381,7 @@ def main():
             ]))
             st.caption("Zero external LLM calls in this demo.")
             st.caption("SYNTHETIC DEMO · not verified")
+        map_route = bool(re.search(r"/(?:map-explorer|admin-map)/?$", str(getattr(st.context, "url", ""))))
         st.markdown("""
         <style>
         div[data-testid="stPopover"] { position: fixed !important; display: inline-flex !important; width: max-content !important; max-width: calc(100vw - 1.5rem) !important; left: auto !important; right: 1.5rem !important; bottom: 1.25rem !important; z-index: 99999 !important; }
@@ -3014,10 +3391,20 @@ def main():
         @media (max-width: 640px) { div[data-testid="stPopover"] { right: .75rem !important; bottom: .75rem !important; } div[data-testid="stPopover"] button, button[title="Open the PropClue property assistant"] { width: 190px !important; min-width: 190px !important; min-height: 56px !important; font-size: 1.05rem !important; } }
         </style>
         """, unsafe_allow_html=True)
-        with st.popover("💬  Ask PropClue", type="primary", help="Open the PropClue property assistant"):
-            st.markdown("#### Your property assistant")
-            st.caption("Ask about projects, prices, market trends, or document checks.")
-            show_assistant(db, user, city, with_header=False, floating=True)
+        if map_route:
+            st.markdown("""
+            <style>
+            div[data-testid="stPopover"] { left:50% !important; right:auto !important; bottom:1rem !important; transform:translateX(-50%) !important; }
+            div[data-testid="stPopover"] button, button[title="Open the PropClue property assistant"] { width:min(520px,92vw) !important; min-width:min(520px,92vw) !important; min-height:68px !important; border-radius:22px !important; background:linear-gradient(115deg,#0d9488,#087e8b) !important; }
+            div[data-testid="stPopoverBody"] { width:min(660px,94vw) !important; }
+            @media(max-width:640px){div[data-testid="stPopover"]{bottom:.6rem!important}div[data-testid="stPopover"] button{min-width:92vw!important}}
+            </style>
+            """, unsafe_allow_html=True)
+        if not map_route:
+            with st.popover("Ask PropClue · map, documents & investment", type="primary", help="Ask about property details, legal evidence, bank status, nearby POIs, or illustrative investment scenarios"):
+                st.markdown("#### Property intelligence assistant")
+                st.caption("Ask about legal/title checks, bank approval evidence, nearby schools, hospitals, tech parks, transit and other radius signals, or whether an investment scenario fits your assumptions.")
+                show_assistant(db, user, city, with_header=False, floating=True)
         navigation.run()
 
 
