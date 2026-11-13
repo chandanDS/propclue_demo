@@ -1371,8 +1371,8 @@ def render_circle_map(
         layers=layers,
         initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=0),
         tooltip={"html": "<div><b>{name}</b><br/>{detail}</div>", "style": {"backgroundColor": "#0c213c", "color": "#f5f8fc", "fontSize": "12px", "padding": "10px", "maxWidth": "360px", "borderRadius": "10px"}},
-        # Explicitly use MapLibre: Pydeck otherwise selects CARTO's keyed
-        # provider even when a public CARTO style URL is supplied.
+        # Explicitly use MapLibre with OpenFreeMap's public style; avoid the
+        # CARTO raster endpoint, which now displays an API-key watermark.
         map_provider="maplibre",
         map_style="https://tiles.openfreemap.org/styles/positron",
     )
@@ -2012,7 +2012,7 @@ def show_map(db, user: User, city: str, show_header: bool = True):
         }
         render_hover_map(data=map_payload, key=f"hover-map-{market_slug}-{center_slug}")
         radius_anchor = str(selected_property["project_name"]) if selected_property is not None else str(center["name"])
-        st.caption(f"Radius centered on {radius_anchor}. Project coordinates are approximate locality offsets. Map hover updates the adjacent detail pane; map tiles are attributed to OpenStreetMap and CARTO.")
+        st.caption(f"Radius centered on {radius_anchor}. Project coordinates are approximate locality offsets. Map hover updates the adjacent detail pane; base map attribution: © OpenStreetMap contributors.")
         map_assist_col = st.columns([1, 2, 1])[1]
         with map_assist_col.popover("✦ Ask PropClue about this area", type="primary", width="stretch"):
             st.caption("Ask about legal/title evidence, bank approval, proximity, or investment scenarios.")
