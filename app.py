@@ -301,9 +301,9 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
     </section>
     """,
     css="""
-    .pc-hover-map-shell{display:grid;grid-template-columns:minmax(0,2.05fr) minmax(285px,1fr);gap:0;min-height:610px;border:1px solid #dce7ed;border-radius:20px;overflow:hidden;background:#fff;box-shadow:0 12px 34px rgba(12,33,60,.08);font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#102a43}
-    .pc-hover-map-canvas{height:610px;width:100%;min-width:0;position:relative;background:#e9eef1}
-    .pc-hover-map-pane{height:610px;overflow-y:auto;padding:1.15rem 1rem;background:linear-gradient(180deg,#f9fcfd,#fff 48%);border-left:1px solid #e1e9ed}
+    .pc-hover-map-shell{position:relative;display:block;height:610px;min-height:610px;border:1px solid #dce7ed;border-radius:20px;overflow:hidden;background:#fff;box-shadow:0 12px 34px rgba(12,33,60,.08);font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#102a43}
+    .pc-hover-map-canvas{position:absolute;inset:0;height:100%;width:100%;min-width:0;background:#e9eef1}
+    .pc-hover-map-pane{position:absolute;z-index:500;top:0;right:0;width:min(36%,390px);height:100%;overflow-y:auto;padding:1.15rem 1rem;background:rgba(255,255,255,.97);box-shadow:-12px 0 30px rgba(12,33,60,.12);border-left:1px solid #e1e9ed;backdrop-filter:blur(10px)}
     .pc-hover-map-kicker{font-size:.68rem;letter-spacing:.12em;font-weight:800;color:#0d9488;margin-bottom:.55rem}
     .pc-pane-title{font-size:1.08rem;font-weight:800;line-height:1.25;color:#102a43;margin-bottom:.25rem}
     .pc-pane-subtitle{font-size:.76rem;color:#647b8d;line-height:1.45;margin-bottom:.9rem}
@@ -322,7 +322,7 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
     .pc-pane-hover-title{font-weight:800;font-size:.85rem;color:#0b716b;line-height:1.3}
     .pc-pane-hover-detail{white-space:pre-line;font-size:.73rem;line-height:1.5;color:#38566b;margin-top:.35rem;overflow-wrap:anywhere}
     .pc-map-fallback{padding:1rem;color:#4a6478}
-    @media(max-width:850px){.pc-hover-map-shell{grid-template-columns:1fr}.pc-hover-map-canvas{height:440px}.pc-hover-map-pane{height:auto;max-height:520px;border-left:0;border-top:1px solid #e1e9ed}}
+    @media(max-width:850px){.pc-hover-map-shell{height:610px;min-height:610px}.pc-hover-map-canvas{height:100%;width:100%}.pc-hover-map-pane{top:auto;left:0;right:0;bottom:0;width:100%;height:42%;max-height:300px;padding:.85rem;background:rgba(255,255,255,.96);border-left:0;border-top:1px solid #e1e9ed}}
     """,
     js="""
     export default function(component){
@@ -399,8 +399,8 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
         const addPin=(item,kind)=>{
           const lat=Number(item.latitude),lon=Number(item.longitude);if(!Number.isFinite(lat)||!Number.isFinite(lon))return;
           const color=colorFor(item.fill_color);
-          const radius=kind==='project'?9:(kind==='amenity'?7:6);
-          const marker=L.circleMarker([lat,lon],{radius,weight:2,color:'#ffffff',fillColor:color,fillOpacity:.94});
+          const radius=kind==='project'?13:(kind==='amenity'?11:10);
+          const marker=L.circleMarker([lat,lon],{radius,weight:2.5,color:'#ffffff',fillColor:color,fillOpacity:.96,bubblingMouseEvents:false});
           const feature={...item,kind};
           marker.bindTooltip(String(item.name||item.category||'Map detail'),{direction:'top',opacity:.96,sticky:true});
           marker.on('mouseover',()=>renderFeature(feature));
@@ -2028,7 +2028,7 @@ def show_map(db, user: User, city: str, show_header: bool = True):
                 "note": "Hover over any locality, project or radius point to show its details here. Distances and places labeled intelligence_demo are synthetic, straight-line estimates.",
             },
         }
-        render_hover_map(data=map_payload, key=f"hover-map-v4-{market_slug}-{center_slug}")
+        render_hover_map(data=map_payload, key=f"hover-map-v5-{market_slug}-{center_slug}")
         radius_anchor = str(selected_property["project_name"]) if selected_property is not None else str(center["name"])
         st.caption(f"Radius centered on {radius_anchor}. Project coordinates are approximate locality offsets. Map hover updates the adjacent detail pane; base map attribution: © OpenStreetMap contributors.")
         map_assist_col = st.columns([1, 2, 1])[1]
