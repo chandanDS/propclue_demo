@@ -290,7 +290,7 @@ export default function (component) {
 
 
 _HOVER_MAP_COMPONENT = st.components.v2.component(
-    "propclue_hover_map_sidepane_v11",
+    "propclue_hover_map_sidepane_v12",
     html="""
     <section class="pc-hover-map-shell">
       <div class="pc-hover-map-canvas" role="application" aria-label="Interactive property radius map"></div>
@@ -376,7 +376,7 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
         if(!window.L)return;
         mapEl.style.width='100%';
         mapEl.style.height='100%';
-        const mapVersion='v11';
+        const mapVersion='v12';
         if(parentElement.__pcMapVersion!==mapVersion){
           if(parentElement.__pcHoverMap){parentElement.__pcHoverMap.remove();parentElement.__pcHoverMap=null;}
           parentElement.__pcBaseTileUrl=null;
@@ -393,12 +393,14 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
         }else if(parentElement.__pcCenter!==center.join(',')||parentElement.__pcZoom!==Number(data.zoom)){
           map.setView(center,Number(data.zoom)||12);
         }
+        mapEl.__pcHoverMap=map;
         // Use the public OpenStreetMap raster endpoint. CARTO's nominally
         // public raster URL now returns an API KEY REQUIRED placeholder.
         const baseTileUrl='https://tile.openstreetmap.org/{z}/{x}/{y}.png';
         if(parentElement.__pcBaseTileUrl!==baseTileUrl){
           map.eachLayer(layer=>{if(layer instanceof L.TileLayer)map.removeLayer(layer);});
-          L.tileLayer(baseTileUrl,{maxZoom:19,tileSize:256,detectRetina:false,attribution:'&copy; OpenStreetMap contributors',keepBuffer:4,updateWhenIdle:true,updateWhenZooming:false}).addTo(map);
+          const tileLayer=L.tileLayer(baseTileUrl,{maxZoom:19,tileSize:256,detectRetina:false,attribution:'&copy; OpenStreetMap contributors',keepBuffer:4,updateWhenIdle:true,updateWhenZooming:false}).addTo(map);
+          mapEl.__pcTileLayer=tileLayer;
           parentElement.__pcBaseTileUrl=baseTileUrl;
         }
         parentElement.__pcCenter=center.join(',');
@@ -451,7 +453,7 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
 
 def render_hover_map(*, data: dict, key: str) -> None:
     """Render Leaflet map with in-component hover-to-side-pane details."""
-    _HOVER_MAP_COMPONENT(key=f"{key}-v11", data=data, width="stretch", height=610)
+    _HOVER_MAP_COMPONENT(key=f"{key}-v12", data=data, width="stretch", height=610)
 
 
 def track_buyer_data(db, user: User, module: str, items: list[dict], title: str = "") -> None:
