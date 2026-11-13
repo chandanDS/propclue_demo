@@ -378,7 +378,7 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
         const center=[Number(data.center_lat),Number(data.center_lon)];
         if(!map){
           map=L.map(mapEl,{scrollWheelZoom:true}).setView(center,Number(data.zoom)||12);
-          L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:20,attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
+          L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
           parentElement.__pcHoverMap=map;
           map.on('mouseout',()=>{});
         }else if(parentElement.__pcCenter!==center.join(',')||parentElement.__pcZoom!==Number(data.zoom)){
@@ -1374,7 +1374,7 @@ def render_circle_map(
         # Explicitly use MapLibre: Pydeck otherwise selects CARTO's keyed
         # provider even when a public CARTO style URL is supplied.
         map_provider="maplibre",
-        map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+        map_style="https://tiles.openfreemap.org/styles/positron",
     )
     return st.pydeck_chart(deck, width="stretch", height=height, alt=alt,
                            key=key, on_select="rerun", selection_mode="single-object")
