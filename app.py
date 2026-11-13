@@ -989,6 +989,7 @@ def get_city_filter(db, user: User) -> str:
     selected_slug = st.selectbox(
         "Market", markets, index=markets.index(preferred),
         format_func=lambda slug: market_labels[slug], key="live-market-selector",
+        label_visibility="collapsed", help="Select market",
     )
     st.session_state["market_slug"] = selected_slug
     selected_city = market_labels[selected_slug]
@@ -1370,8 +1371,9 @@ def render_circle_map(
         layers=layers,
         initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=0),
         tooltip={"html": "<div><b>{name}</b><br/>{detail}</div>", "style": {"backgroundColor": "#0c213c", "color": "#f5f8fc", "fontSize": "12px", "padding": "10px", "maxWidth": "360px", "borderRadius": "10px"}},
-        # Use CARTO's public no-key style URL. Pydeck's `light` alias resolves
-        # to a Mapbox style and triggers an API-key prompt in Cloud.
+        # Explicitly use MapLibre: Pydeck otherwise selects CARTO's keyed
+        # provider even when a public CARTO style URL is supplied.
+        map_provider="maplibre",
         map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
     )
     return st.pydeck_chart(deck, width="stretch", height=height, alt=alt,
@@ -3375,7 +3377,7 @@ def main():
         if pending_route in buyer_targets:
             st.switch_page(buyer_targets[pending_route])
 
-        header_left, header_center, market_header, header_right = st.columns([1.5, 5.4, 1.7, 2.5], vertical_alignment="center")
+        header_left, header_center, market_header, header_right = st.columns([1.4, 4.8, 2.1, 2.8], vertical_alignment="center")
         with header_left:
             brand_lockup(compact=True)
         with header_center:
@@ -3394,7 +3396,7 @@ def main():
             city = get_city_filter(db, user)
         with header_right:
             user_col, signout_col = st.columns([1.55, .9], vertical_alignment="center")
-            user_col.markdown(f"<div style='white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.78rem;font-weight:700;color:#24465c'>{html.escape(user.name)}<br><span style='font-size:.68rem;font-weight:500;color:#688095'>{html.escape(user.role.replace('_', ' ').title())}</span></div>", unsafe_allow_html=True)
+            user_col.markdown(f"<div style='display:flex;align-items:center;gap:.38rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.78rem;color:#24465c'><strong>{html.escape(user.name)}</strong><span style='font-size:.68rem;color:#688095'>{html.escape(user.role.replace('_', ' ').title())}</span></div>", unsafe_allow_html=True)
             if signout_col.button("Sign out", key="top-sign-out", width="stretch", icon=":material/logout:"):
                 st.session_state.pop("user_id", None)
                 st.session_state["show_auth"] = False
