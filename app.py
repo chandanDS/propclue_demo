@@ -391,7 +391,7 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
         const baseTileUrl='https://tile.openstreetmap.org/{z}/{x}/{y}.png';
         if(parentElement.__pcBaseTileUrl!==baseTileUrl){
           map.eachLayer(layer=>{if(layer instanceof L.TileLayer)map.removeLayer(layer);});
-          L.tileLayer(baseTileUrl,{maxZoom:19,attribution:'&copy; OpenStreetMap contributors',keepBuffer:4,updateWhenIdle:true,updateWhenZooming:false}).addTo(map);
+          L.tileLayer(baseTileUrl,{maxZoom:19,tileSize:256,detectRetina:false,attribution:'&copy; OpenStreetMap contributors',keepBuffer:4,updateWhenIdle:true,updateWhenZooming:false}).addTo(map);
           parentElement.__pcBaseTileUrl=baseTileUrl;
         }
         parentElement.__pcCenter=center.join(',');
@@ -444,7 +444,7 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
 
 def render_hover_map(*, data: dict, key: str) -> None:
     """Render Leaflet map with in-component hover-to-side-pane details."""
-    _HOVER_MAP_COMPONENT(key=f"{key}-v9", data=data, width="stretch", height=610)
+    _HOVER_MAP_COMPONENT(key=f"{key}-v10", data=data, width="stretch", height=610)
 
 
 def track_buyer_data(db, user: User, module: str, items: list[dict], title: str = "") -> None:
