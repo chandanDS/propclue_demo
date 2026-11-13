@@ -290,7 +290,7 @@ export default function (component) {
 
 
 _HOVER_MAP_COMPONENT = st.components.v2.component(
-    "propclue_hover_map_sidepane_v12",
+    "propclue_hover_map_sidepane_v13",
     html="""
     <section class="pc-hover-map-shell">
       <div class="pc-hover-map-canvas" role="application" aria-label="Interactive property radius map"></div>
@@ -366,8 +366,15 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
         addText(pane,'div','pc-pane-note','Map points and proximity estimates are approximate. Synthetic records carry the intelligence_demo label.');
       };
       const ensureLeaflet=(done)=>{
+        const root=mapEl.getRootNode();
+        const styleHost=root.nodeType===9?root.head:root;
+        if(!styleHost.querySelector('style[data-pc-leaflet-core]')){
+          const style=document.createElement('style');style.dataset.pcLeafletCore='1';
+          style.textContent='.leaflet-container{position:relative;overflow:hidden;outline:0}.leaflet-pane,.leaflet-tile,.leaflet-marker-icon,.leaflet-marker-shadow,.leaflet-tile-container,.leaflet-pane>svg,.leaflet-pane>canvas,.leaflet-zoom-box{position:absolute;left:0;top:0}.leaflet-container img.leaflet-tile{max-width:none!important;max-height:none!important;padding:0}.leaflet-container .leaflet-pane>svg{max-width:none!important;max-height:none!important}.leaflet-container .leaflet-control-container{position:absolute;inset:0;pointer-events:none}.leaflet-top,.leaflet-bottom{position:absolute;z-index:1000;pointer-events:none}.leaflet-top{top:0}.leaflet-bottom{bottom:0}.leaflet-left{left:0}.leaflet-right{right:0}.leaflet-control{position:relative;z-index:800;pointer-events:auto}.leaflet-control-zoom{margin:10px}.leaflet-control-attribution{padding:0 5px;background:rgba(255,255,255,.8);font:11px/1.5 Arial,sans-serif}.leaflet-interactive{cursor:pointer}';
+          styleHost.appendChild(style);
+        }
+        if(!styleHost.querySelector('link[data-pc-leaflet]')){const link=document.createElement('link');link.rel='stylesheet';link.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';link.dataset.pcLeaflet='1';styleHost.appendChild(link);}
         if(window.L){done();return;}
-        if(!document.querySelector('link[data-pc-leaflet]')){const link=document.createElement('link');link.rel='stylesheet';link.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';link.dataset.pcLeaflet='1';document.head.appendChild(link);}
         const existing=document.querySelector('script[data-pc-leaflet]');
         if(existing){existing.addEventListener('load',done,{once:true});if(window.L)done();return;}
         const script=document.createElement('script');script.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';script.dataset.pcLeaflet='1';script.onload=done;script.onerror=()=>{mapEl.innerHTML='<div class="pc-map-fallback">Interactive map tiles could not load. Check the browser network connection.</div>';};document.head.appendChild(script);
@@ -376,7 +383,7 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
         if(!window.L)return;
         mapEl.style.width='100%';
         mapEl.style.height='100%';
-        const mapVersion='v12';
+        const mapVersion='v13';
         if(parentElement.__pcMapVersion!==mapVersion){
           if(parentElement.__pcHoverMap){parentElement.__pcHoverMap.remove();parentElement.__pcHoverMap=null;}
           parentElement.__pcBaseTileUrl=null;
@@ -453,7 +460,7 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
 
 def render_hover_map(*, data: dict, key: str) -> None:
     """Render Leaflet map with in-component hover-to-side-pane details."""
-    _HOVER_MAP_COMPONENT(key=f"{key}-v12", data=data, width="stretch", height=610)
+    _HOVER_MAP_COMPONENT(key=f"{key}-v13", data=data, width="stretch", height=610)
 
 
 def track_buyer_data(db, user: User, module: str, items: list[dict], title: str = "") -> None:
