@@ -376,6 +376,13 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
         if(!window.L)return;
         mapEl.style.width='100%';
         mapEl.style.height='100%';
+        const mapVersion='v11';
+        if(parentElement.__pcMapVersion!==mapVersion){
+          if(parentElement.__pcHoverMap){parentElement.__pcHoverMap.remove();parentElement.__pcHoverMap=null;}
+          parentElement.__pcBaseTileUrl=null;
+          parentElement.__pcOverlay=null;
+          parentElement.__pcMapVersion=mapVersion;
+        }
         let map=parentElement.__pcHoverMap;
         if(parentElement.__pcContext!==data.context_id){parentElement.__pcContext=data.context_id;parentElement.__pcHasHovered=false;}
         const center=[Number(data.center_lat),Number(data.center_lon)];
@@ -444,7 +451,7 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
 
 def render_hover_map(*, data: dict, key: str) -> None:
     """Render Leaflet map with in-component hover-to-side-pane details."""
-    _HOVER_MAP_COMPONENT(key=f"{key}-v10", data=data, width="stretch", height=610)
+    _HOVER_MAP_COMPONENT(key=f"{key}-v11", data=data, width="stretch", height=610)
 
 
 def track_buyer_data(db, user: User, module: str, items: list[dict], title: str = "") -> None:
