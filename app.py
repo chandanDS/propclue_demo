@@ -301,7 +301,7 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
     </section>
     """,
     css="""
-    .pc-hover-map-shell{position:relative;display:block;height:610px;min-height:610px;border:1px solid #dce7ed;border-radius:20px;overflow:hidden;background:#fff;box-shadow:0 12px 34px rgba(12,33,60,.08);font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#102a43}
+    .pc-hover-map-shell{position:relative;display:block;width:100%;height:610px;min-height:610px;border:1px solid #dce7ed;border-radius:20px;overflow:hidden;background:#fff;box-shadow:0 12px 34px rgba(12,33,60,.08);font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#102a43}
     .pc-hover-map-canvas{position:relative;display:block;height:100%;width:100%;min-width:0;background:#e9eef1}
     .pc-hover-map-canvas.leaflet-container{width:100%!important;height:100%!important;min-width:0!important;min-height:0!important}
     .pc-hover-map-pane{position:absolute;z-index:500;top:0;right:0;width:min(36%,390px);height:100%;overflow-y:auto;padding:1.15rem 1rem;background:rgba(255,255,255,.97);box-shadow:-12px 0 30px rgba(12,33,60,.12);border-left:1px solid #e1e9ed;backdrop-filter:blur(10px)}
@@ -374,12 +374,8 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
       };
       const draw=()=>{
         if(!window.L)return;
-        const shell=parentElement.querySelector('.pc-hover-map-shell');
-        const shellWidth=shell?.getBoundingClientRect().width||0;
-        const canvasWidth=mapEl.getBoundingClientRect().width||0;
-        // Streamlit can initially mount a stretched component at Leaflet's
-        // default 256px tile width. Wait until its canvas fills the shell.
-        if(shellWidth>320&&canvasWidth<shellWidth-80){setTimeout(draw,200);return;}
+        mapEl.style.width='100%';
+        mapEl.style.height='100%';
         let map=parentElement.__pcHoverMap;
         if(parentElement.__pcContext!==data.context_id){parentElement.__pcContext=data.context_id;parentElement.__pcHasHovered=false;}
         const center=[Number(data.center_lat),Number(data.center_lon)];
@@ -436,7 +432,9 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
         }
         requestAnimationFrame(()=>requestAnimationFrame(invalidateMapSize));
         clearTimeout(parentElement.__pcResizeTimer);
-        parentElement.__pcResizeTimer=setTimeout(invalidateMapSize,250);
+        parentElement.__pcResizeTimer=setTimeout(invalidateMapSize,150);
+        clearTimeout(parentElement.__pcResizeTimer2);
+        parentElement.__pcResizeTimer2=setTimeout(invalidateMapSize,600);
       };
       ensureLeaflet(draw);
     }
@@ -446,7 +444,7 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
 
 def render_hover_map(*, data: dict, key: str) -> None:
     """Render Leaflet map with in-component hover-to-side-pane details."""
-    _HOVER_MAP_COMPONENT(key=f"{key}-v8", data=data, width="stretch", height=610)
+    _HOVER_MAP_COMPONENT(key=f"{key}-v9", data=data, width="stretch", height=610)
 
 
 def track_buyer_data(db, user: User, module: str, items: list[dict], title: str = "") -> None:
