@@ -302,7 +302,7 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
     """,
     css="""
     .pc-hover-map-shell{display:grid;grid-template-columns:minmax(0,2.05fr) minmax(285px,1fr);gap:0;min-height:610px;border:1px solid #dce7ed;border-radius:20px;overflow:hidden;background:#fff;box-shadow:0 12px 34px rgba(12,33,60,.08);font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#102a43}
-    .pc-hover-map-canvas{height:610px;min-width:0;background:#e9eef1}
+    .pc-hover-map-canvas{height:610px;width:100%;min-width:0;position:relative;background:#e9eef1}
     .pc-hover-map-pane{height:610px;overflow-y:auto;padding:1.15rem 1rem;background:linear-gradient(180deg,#f9fcfd,#fff 48%);border-left:1px solid #e1e9ed}
     .pc-hover-map-kicker{font-size:.68rem;letter-spacing:.12em;font-weight:800;color:#0d9488;margin-bottom:.55rem}
     .pc-pane-title{font-size:1.08rem;font-weight:800;line-height:1.25;color:#102a43;margin-bottom:.25rem}
@@ -411,7 +411,20 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
         for(const item of (data.projects||[]))addPin(item,'project');
         for(const item of (data.pois||[]))addPin(item,'amenity');
         if(!parentElement.__pcHasHovered)renderDefault();
-        setTimeout(()=>map.invalidateSize(),50);
+        const invalidateMapSize=()=>{
+          const activeMap=parentElement.__pcHoverMap;
+          if(activeMap)activeMap.invalidateSize({pan:false,animate:false,debounceMoveend:true});
+        };
+        if(!parentElement.__pcMapResizeObserver&&window.ResizeObserver){
+          parentElement.__pcMapResizeObserver=new ResizeObserver(()=>{
+            cancelAnimationFrame(parentElement.__pcResizeFrame||0);
+            parentElement.__pcResizeFrame=requestAnimationFrame(()=>requestAnimationFrame(invalidateMapSize));
+          });
+          parentElement.__pcMapResizeObserver.observe(mapEl);
+        }
+        requestAnimationFrame(()=>requestAnimationFrame(invalidateMapSize));
+        clearTimeout(parentElement.__pcResizeTimer);
+        parentElement.__pcResizeTimer=setTimeout(invalidateMapSize,250);
       };
       ensureLeaflet(draw);
     }
@@ -2015,7 +2028,7 @@ def show_map(db, user: User, city: str, show_header: bool = True):
                 "note": "Hover over any locality, project or radius point to show its details here. Distances and places labeled intelligence_demo are synthetic, straight-line estimates.",
             },
         }
-        render_hover_map(data=map_payload, key=f"hover-map-v3-{market_slug}-{center_slug}")
+        render_hover_map(data=map_payload, key=f"hover-map-v4-{market_slug}-{center_slug}")
         radius_anchor = str(selected_property["project_name"]) if selected_property is not None else str(center["name"])
         st.caption(f"Radius centered on {radius_anchor}. Project coordinates are approximate locality offsets. Map hover updates the adjacent detail pane; base map attribution: © OpenStreetMap contributors.")
         map_assist_col = st.columns([1, 2, 1])[1]
