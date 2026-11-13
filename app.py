@@ -798,13 +798,41 @@ def safe_connection_error(exc: Exception) -> str:
 
 def login_screen(db):
     brand_lockup()
-    st.markdown("<h1 style='font-family:Inter, sans-serif;font-weight:800;color:#0C213C;line-height:1.08'>Find your next property with more clarity.</h1>", unsafe_allow_html=True)
-    st.caption("Demo accounts with the live PropClue project and locality catalogue")
+    st.markdown("""
+    <style>
+    .pc-home-hero{position:relative;overflow:hidden;min-height:390px;padding:2.2rem 2rem;border:1px solid #dce8ed;border-radius:28px;background:radial-gradient(ellipse at 77% 25%,rgba(28,183,155,.18),transparent 34%),linear-gradient(120deg,#071c2b 0%,#0b2639 56%,#123a49 100%);box-shadow:0 22px 54px rgba(7,30,48,.15);color:#f4f9fc}
+    .pc-home-hero:after{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(180,220,229,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(180,220,229,.055) 1px,transparent 1px);background-size:36px 36px;mask-image:linear-gradient(90deg,transparent 26%,#000 100%);pointer-events:none}
+    .pc-home-copy{position:relative;z-index:2;max-width:610px}.pc-home-kicker{display:inline-flex;align-items:center;gap:.5rem;border:1px solid rgba(95,227,179,.3);border-radius:99px;padding:.42rem .72rem;color:#9ce8d1;background:rgba(12,93,83,.24);font-size:.69rem;font-weight:800;letter-spacing:.13em;text-transform:uppercase}
+    .pc-home-title{margin:1.2rem 0 .8rem;color:#f6fbfd;font-size:clamp(2.1rem,4vw,3.45rem);line-height:1.04;letter-spacing:-.055em;font-weight:780}.pc-home-title span{color:#61dfc4}.pc-home-subtitle{max-width:530px;color:#b6cbd5;font-size:1.04rem;line-height:1.65}
+    .pc-home-signals{display:flex;flex-wrap:wrap;gap:.55rem;margin-top:1.4rem}.pc-home-signal{padding:.48rem .68rem;border:1px solid rgba(194,222,231,.15);border-radius:12px;background:rgba(255,255,255,.055);color:#d6e4e9;font-size:.78rem}
+    .pc-home-map{position:absolute;right:2.2rem;top:2.2rem;width:37%;height:78%;min-width:255px;border:1px solid rgba(172,224,225,.22);border-radius:22px;background:linear-gradient(145deg,rgba(12,44,58,.78),rgba(9,34,47,.9));box-shadow:0 20px 40px rgba(0,0,0,.18);transform:rotate(1.2deg);z-index:1;overflow:hidden}
+    .pc-home-street{position:absolute;height:1px;background:rgba(202,225,222,.22);transform-origin:left}.pc-home-heat{position:absolute;border-radius:50%;filter:blur(16px);opacity:.78}.pc-home-pin{position:absolute;width:12px;height:12px;border:3px solid #f4fffc;border-radius:50%;background:#17b89b;box-shadow:0 0 0 7px rgba(23,184,155,.19),0 0 25px rgba(23,184,155,.7)}
+    .pc-home-map-label{position:absolute;left:1rem;top:1rem;padding:.58rem .7rem;border:1px solid rgba(206,230,230,.16);border-radius:12px;background:rgba(5,24,36,.72);backdrop-filter:blur(12px)}.pc-home-map-label small{display:block;color:#81a7b5;font-size:.61rem;letter-spacing:.12em;font-weight:800}.pc-home-map-label strong{display:block;color:#eef8f6;font-size:.87rem;margin-top:.2rem}.pc-home-map-score{position:absolute;right:.8rem;bottom:.8rem;padding:.68rem .78rem;border:1px solid rgba(197,226,223,.18);border-radius:14px;background:rgba(5,24,36,.77);backdrop-filter:blur(12px)}.pc-home-map-score small{display:block;color:#92b2bc;font-size:.6rem;letter-spacing:.1em}.pc-home-map-score strong{color:#fff;font-size:1.3rem}.pc-home-map-score span{color:#72e2c4;font-size:.7rem}
+    .pc-home-step{color:#315168;font-size:.83rem}.pc-home-step strong{display:block;color:#102a43;font-size:.96rem;margin-bottom:.24rem}
+    @media(max-width:800px){.pc-home-hero{padding:1.4rem;min-height:565px}.pc-home-copy{max-width:100%}.pc-home-map{top:auto;right:1.1rem;bottom:1rem;width:calc(100% - 2.2rem);height:205px;min-width:0;transform:none}.pc-home-title{font-size:2.2rem}}
+    </style>
+    <section class="pc-home-hero">
+      <div class="pc-home-copy">
+        <div class="pc-home-kicker">⌖ Real estate intelligence · Buyer workspace</div>
+        <h1 class="pc-home-title">Find the right <span>locality</span><br>before the right property.</h1>
+        <div class="pc-home-subtitle">Explore market signals, compare live project records and understand the area around a property before you shortlist.</div>
+        <div class="pc-home-signals"><span class="pc-home-signal">Locality intelligence</span><span class="pc-home-signal">Project search</span><span class="pc-home-signal">Radius exploration</span><span class="pc-home-signal">Evidence-aware Q&amp;A</span></div>
+      </div>
+      <div class="pc-home-map" aria-label="Illustrative market heatmap visual">
+        <div class="pc-home-street" style="left:-10%;top:36%;width:125%;transform:rotate(24deg)"></div><div class="pc-home-street" style="left:-5%;top:70%;width:120%;transform:rotate(-22deg)"></div><div class="pc-home-street" style="left:48%;top:-5%;width:115%;transform:rotate(72deg)"></div><div class="pc-home-street" style="left:19%;top:3%;width:110%;transform:rotate(103deg)"></div>
+        <div class="pc-home-heat" style="left:17%;top:30%;width:105px;height:105px;background:#0ea58d"></div><div class="pc-home-heat" style="left:45%;top:46%;width:120px;height:120px;background:#f0a63b"></div><div class="pc-home-heat" style="left:66%;top:20%;width:90px;height:90px;background:#31a7a0"></div><div class="pc-home-heat" style="left:22%;top:68%;width:85px;height:85px;background:#d77355"></div>
+        <div class="pc-home-pin" style="left:53%;top:48%"></div><div class="pc-home-map-label"><small>ILLUSTRATIVE HEATMAP</small><strong>Locality signals</strong></div><div class="pc-home-map-score"><small>SPATIAL PREVIEW</small><strong>Explore</strong><span>conceptual · live view after sign-in</span></div>
+      </div>
+    </section>
+    """, unsafe_allow_html=True)
     left, right = st.columns([1.0, 1.0], gap="large")
     with left:
-        st.markdown("### Your property research workspace")
-        st.write("Review live project listings, explore areas on the map, and keep a focused shortlist.")
-        st.caption("Source records can be estimated or unverified. The demo does not independently confirm legal, title, tax, bank, price, or availability claims.")
+        st.markdown("#### A clearer property decision, from area to project")
+        steps = st.columns(3)
+        steps[0].markdown("<div class='pc-home-step'><strong>01 · Explore</strong>Read locality and market signals.</div>", unsafe_allow_html=True)
+        steps[1].markdown("<div class='pc-home-step'><strong>02 · Focus</strong>Search a locality or project on the map.</div>", unsafe_allow_html=True)
+        steps[2].markdown("<div class='pc-home-step'><strong>03 · Decide</strong>Compare evidence and save your shortlist.</div>", unsafe_allow_html=True)
+        st.caption("Source records may be estimated or unverified. The demo does not independently confirm legal, title, tax, bank, price, or availability claims.")
     with right:
         with st.container(border=True):
             st.subheader("Sign in or create a demo account")
@@ -1281,9 +1309,17 @@ def render_circle_map(
     center_lat: float, center_lon: float, zoom: float, radius_km: float,
     localities: pd.DataFrame | None = None, projects: pd.DataFrame | None = None,
     pois: pd.DataFrame | None = None, height: int = 500, alt: str = "Property and locality map",
+    show_heatmap: bool = True,
 ) -> None:
     """Render stable pixel-sized circles with hover cards, plus a radius boundary."""
     layers = []
+    if show_heatmap and localities is not None and not localities.empty and "heat_weight" in localities.columns:
+        layers.append(pdk.Layer(
+            "HeatmapLayer", data=localities, get_position="[longitude, latitude]",
+            get_weight="heat_weight", radius_pixels=82, intensity=1.0, threshold=0.04,
+            opacity=0.48, pickable=False,
+            color_range=[[10, 110, 110, 0], [13, 148, 136, 90], [245, 158, 11, 155], [239, 68, 68, 215]],
+        ))
     radius_frame = pd.DataFrame([{"latitude": center_lat, "longitude": center_lon, "radius_m": radius_km * 1000}])
     layers.append(pdk.Layer(
         "ScatterplotLayer", data=radius_frame, get_position="[longitude, latitude]",
@@ -1682,32 +1718,60 @@ def show_map(db, user: User, city: str, show_header: bool = True):
         # Keep the selected locality, map center, radius layer and assistant context in sync.
         st.session_state["live-map-center-v3"] = str(locked_slug)
     preferred_center = max(locality_slugs, key=lambda slug: listing_counts_all.get(slug, 0))
+    property_labels: dict[int, str] = {}
     if zoomedin_demo_mode:
         center_slug = hsr_slug
         st.caption("Demo map is centred on HSR Layout automatically. Generated parcels and buildings are separate from live listings.")
+        selected_property_id = None
+        selected_property = None
     else:
-        center_slug = st.selectbox(
-            "Search center", locality_slugs, index=locality_slugs.index(preferred_center),
-            format_func=lambda slug: str(localities.loc[localities["slug"] == slug, "name"].iloc[0]),
-            key="live-map-center-v3",
-        )
+        search_cols = st.columns([1, 1.45], gap="medium")
+        with search_cols[0]:
+            center_slug = st.selectbox(
+                "Search locality", locality_slugs, index=locality_slugs.index(preferred_center),
+                format_func=lambda slug: str(localities.loc[localities["slug"] == slug, "name"].iloc[0]),
+                key="live-map-center-v3",
+                help="Choose the locality that anchors the search radius.",
+            )
+        locality_projects = listings[listings["locality_match_slug"].astype(str) == str(center_slug)].copy()
+        property_ids = [int(value) for value in locality_projects["id"].dropna().tolist()]
+        property_labels = {
+            int(row.id): f"{row.project_name} · {row.builder_name or 'Builder not provided'}"
+            for row in locality_projects.itertuples(index=False)
+        }
+        property_key = f"live-map-property-v1-{center_slug}"
+        if locked_slug == center_slug and st.session_state.get("locked_project_id") in property_ids:
+            st.session_state[property_key] = int(st.session_state["locked_project_id"])
+        with search_cols[1]:
+            selected_property_id = st.selectbox(
+                "Search property · optional",
+                options=[None, *property_ids],
+                format_func=lambda project_id: "All properties in this locality" if project_id is None else property_labels.get(int(project_id), "Project"),
+                key=property_key,
+                help="Search projects in the selected locality. Selecting one filters the project pins; use Lock search to keep the radius focused on it.",
+            )
+        selected_property = locality_projects.loc[locality_projects["id"] == selected_property_id].iloc[0] if selected_property_id is not None else None
     center = localities.loc[localities["slug"] == center_slug].iloc[0]
-    st.markdown("#### Lock an area and build its intelligence report")
+    st.markdown("#### Lock a locality or a property radius")
     lock_col, status_col = st.columns([1, 2], vertical_alignment="center")
-    if lock_col.button("Lock & run area analysis", key="lock-live-map-area-v2", type="primary"):
+    if lock_col.button("Lock search & run analysis", key="lock-live-map-area-v2", type="primary"):
         st.session_state["locked_area_slug"] = center_slug
         st.session_state["locked_area_name"] = str(center["name"])
+        st.session_state["locked_project_id"] = int(selected_property_id) if selected_property_id is not None else None
         st.session_state.pop("area_agent_review", None)
     if lock_col.button("Unlock area", key="unlock-live-map-area"):
         st.session_state.pop("locked_area_slug", None)
         st.session_state.pop("locked_area_name", None)
+        st.session_state.pop("locked_project_id", None)
         st.session_state.pop("area_agent_review", None)
+    locked_slug = st.session_state.get("locked_area_slug")
     locked_in_market = bool(locked_slug and locked_slug in set(locality_slugs))
     if locked_in_market:
         locked_name = localities.loc[localities["slug"] == locked_slug, "name"]
-        status_col.success(f"Locked: {locked_name.iloc[0]} · analysis below is scoped to this area")
+        locked_project_label = property_labels.get(int(st.session_state.get("locked_project_id")), "") if st.session_state.get("locked_project_id") else ""
+        status_col.success(f"Locked: {locked_project_label + ' · ' if locked_project_label else ''}{locked_name.iloc[0]} · radius and analysis follow this search")
     else:
-        status_col.caption("Pick a locality, then lock it. The supervisor report will appear here before the map.")
+        status_col.caption("Search a locality, optionally narrow to a project, then lock the radius. The supervisor report appears here.")
 
     price_low = listings["price_min"].fillna(listings["price_max"])
     price_high = listings["price_max"].fillna(listings["price_min"])
@@ -1744,6 +1808,17 @@ def show_map(db, user: User, city: str, show_header: bool = True):
         matching_listings = matching_listings[matching_listings["project_type"].isin(selected_types)]
     else:
         matching_listings = matching_listings.iloc[0:0]
+    heatmap_listings = matching_listings.copy()
+    if selected_property_id is not None:
+        matching_listings = matching_listings[matching_listings["id"] == int(selected_property_id)]
+
+    map_center_lat = float(center["latitude"])
+    map_center_lon = float(center["longitude"])
+    if selected_property is not None:
+        selected_point_frame = property_map_points(pd.DataFrame([selected_property.to_dict()]), localities)
+        if not selected_point_frame.empty:
+            map_center_lat = float(selected_point_frame.iloc[0]["latitude"])
+            map_center_lon = float(selected_point_frame.iloc[0]["longitude"])
 
     locked_row = None
     if locked_in_market:
@@ -1775,14 +1850,32 @@ def show_map(db, user: User, city: str, show_header: bool = True):
             hsr_demo_parcels["asking_psf"].between(*demo_asking_range)
         ].copy()
 
+    heatmap_control_cols = st.columns([1, 1.7, 2.4])
+    show_heatmap = heatmap_control_cols[0].toggle("Locality heatmap", value=True, key="live-map-show-heatmap")
+    heatmap_signal = heatmap_control_cols[1].selectbox(
+        "Heatmap signal", ["Project coverage", "Locality score"], key="live-map-heat-signal",
+        help="Project coverage uses active catalogue rows; locality score uses the connected score field. Neither is a property valuation.",
+    )
+    heatmap_control_cols[2].caption("Heat colors show the selected signal. Pins retain project names and hover details.")
     localities["distance_km"] = localities.apply(
-        lambda row: distance_km(float(center["latitude"]), float(center["longitude"]), float(row["latitude"]), float(row["longitude"])),
+        lambda row: distance_km(map_center_lat, map_center_lon, float(row["latitude"]), float(row["longitude"])),
         axis=1,
     )
     nearby = localities[localities["distance_km"] <= radius_km].copy()
     listing_counts = matching_listings["locality_match_slug"].dropna().value_counts().to_dict()
+    heatmap_counts = heatmap_listings["locality_match_slug"].dropna().value_counts().to_dict()
     localities["matching_listings"] = localities["slug"].map(listing_counts).fillna(0).astype(int)
+    localities["heatmap_listings"] = localities["slug"].map(heatmap_counts).fillna(0).astype(int)
+    if heatmap_signal == "Project coverage":
+        maximum_count = max(heatmap_counts.values(), default=0)
+        localities["heat_weight"] = localities["heatmap_listings"].map(lambda count: float(count) / maximum_count if maximum_count else 0.0)
+    else:
+        score_values = pd.to_numeric(localities["composite_score"], errors="coerce")
+        score_scale = 100.0 if score_values.max(skipna=True) > 10 else 10.0
+        localities["heat_weight"] = (score_values / score_scale).clip(0, 1).fillna(0.0)
+    nearby = nearby.copy()
     nearby["matching_listings"] = nearby["slug"].map(listing_counts).fillna(0).astype(int)
+    nearby["heat_weight"] = nearby["slug"].map(dict(zip(localities["slug"], localities["heat_weight"]))).fillna(0.0)
     # Show every mapped locality inside the search radius, including areas with no exact listing.
     map_points = nearby.copy()
     map_points["point_radius_m"] = map_points.apply(lambda row: 280 if row["slug"] == center_slug else min(650, 130 + 55 * int(row["matching_listings"])), axis=1)
@@ -1807,7 +1900,7 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     poi_points = pd.DataFrame()
     if locked_in_market and locked_row is not None:
         poi_points = intelligence_demo_pois(
-            float(locked_row["latitude"]), float(locked_row["longitude"]), radius_km, str(locked_row["slug"])
+            map_center_lat, map_center_lon, radius_km, str(locked_row["slug"])
         )
     clicked_slug = None
     clicked_demo_parcel = None
@@ -1828,12 +1921,14 @@ def show_map(db, user: User, city: str, show_header: bool = True):
             unsafe_allow_html=True,
         )
         render_circle_map(
-            float(center["latitude"]), float(center["longitude"]), float(zoom), float(radius_km),
+            map_center_lat, map_center_lon, float(zoom), float(radius_km),
             localities=map_points, projects=project_points, pois=poi_points if not poi_points.empty else None,
             height=570,
             alt=f"Map of {center['city']} with visible approximate property circles, locality markers, and radius amenity points",
+            show_heatmap=show_heatmap,
         )
-        st.caption(f"The teal ring shows the {radius_km} km straight-line radius around {center['name']}. Property circles are approximate locality-offset demo coordinates because exact project coordinates are not in the source catalogue. Hover property and amenity circles for details.")
+        radius_anchor = str(selected_property["project_name"]) if selected_property is not None else str(center["name"])
+        st.caption(f"The radius is centered on {radius_anchor}. A selected project uses its approximate locality-offset demo coordinate; otherwise the locality centroid is used. Exact project coordinates are not in the source catalogue. Hover project and amenity circles for details.")
         st.markdown("<div class='pc-map-badges' style='justify-content:flex-start;margin:.5rem 0 1rem'><span class='pc-map-badge' style='color:#0d9488'>● Project circles</span><span class='pc-map-badge' style='color:#e99b13'>● Selected locality</span><span class='pc-map-badge' style='color:#5b8def'>● Radius amenities</span><span class='pc-map-badge'>◌ Search boundary</span></div>", unsafe_allow_html=True)
         # Keep the assistant entry point beside the map so it reads as a map tool.
         map_assist_col = st.columns([1, 2, 1])[1]
@@ -1869,7 +1964,8 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     future = focus_doc.get("future_potential", {}) if isinstance(focus_doc, dict) else {}
     gaps = focus_doc.get("gap_analysis", {}) if isinstance(focus_doc, dict) else {}
     market = focus_doc.get("real_estate", {}) if isinstance(focus_doc, dict) else {}
-    st.markdown(f"### Area / Project Brief · {focus['name']}")
+    brief_name = str(selected_property["project_name"]) if selected_property is not None else str(focus["name"])
+    st.markdown(f"### Area / Project Brief · {brief_name}")
     st.caption("Hover property circles for listing, bank-evidence and approximate age details. Hover amenity circles for the nearest radius signals. Grey locality circles still show coverage without an exact listing match.")
     quality_label = focus_doc.get("meta", {}).get("data_quality", "not specified") if isinstance(focus_doc, dict) else "not specified"
     intel_cols = st.columns(5)
@@ -1879,16 +1975,19 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     trend = market.get("price_trend_pct_6m") if isinstance(market, dict) else None
     intel_cols[3].metric("6-month price trend", f"{float(trend):+.1f}%" if trend is not None else "Not stored", border=True)
     intel_cols[4].metric("Matched active projects", f"{int(focus.get('matching_listings', 0)):,}", border=True)
-    focus_pois = intelligence_demo_pois(float(focus["latitude"]), float(focus["longitude"]), radius_km, str(focus["slug"]))
-    age_seed = int(hashlib.sha256(f"{focus['slug']}:representative-age:intelligence_demo".encode()).hexdigest()[:8], 16)
+    focus_pois = intelligence_demo_pois(map_center_lat, map_center_lon, radius_km, str(focus["slug"]))
+    age_identity = f"project:{int(selected_property['id'])}" if selected_property is not None else f"locality:{focus['slug']}"
+    age_seed = int(hashlib.sha256(f"{age_identity}:representative-age:intelligence_demo".encode()).hexdigest()[:8], 16)
     representative_age = 1 + age_seed % 35
     st.session_state["assistant_map_context"] = {
-        "name": str(focus["name"]), "slug": str(focus["slug"]),
-        "latitude": float(focus["latitude"]), "longitude": float(focus["longitude"]),
+        "name": str(selected_property["project_name"]) if selected_property is not None else str(focus["name"]),
+        "project_name": str(selected_property["project_name"]) if selected_property is not None else "",
+        "slug": str(focus["slug"]),
+        "latitude": map_center_lat, "longitude": map_center_lon,
         "radius_km": float(radius_km),
     }
     render_area_project_brief(
-        str(focus["name"]), focus.get("lifestyle_score"), focus.get("connectivity_score"),
+        brief_name, focus.get("lifestyle_score"), focus.get("connectivity_score"),
         representative_age, focus_pois, scope_label="Area / Project Brief · radius and quality signals",
     )
     project_tailwinds = []
