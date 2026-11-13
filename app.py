@@ -290,7 +290,7 @@ export default function (component) {
 
 
 _HOVER_MAP_COMPONENT = st.components.v2.component(
-    "propclue_hover_map_sidepane",
+    "propclue_hover_map_sidepane_v11",
     html="""
     <section class="pc-hover-map-shell">
       <div class="pc-hover-map-canvas" role="application" aria-label="Interactive property radius map"></div>
