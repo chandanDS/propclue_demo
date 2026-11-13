@@ -58,7 +58,7 @@ except AttributeError:
         database_module.DB_URL = fallback_url
         return str(fallback_path)
 
-from source_data import clear_source_cache, load_area_dna, load_catalog
+from source_data import load_area_dna, load_catalog
 try:
     from source_data import load_builder_directory
 except ImportError:
@@ -3026,12 +3026,6 @@ def show_builder_score_panel(city_listings: pd.DataFrame, listing: pd.Series, ci
 
 def show_source_catalog(db, market_slug: str | None = None, demo_city: str = "Bengaluru", user: User | None = None):
     """Read-only live view of the real PropClue PostgreSQL and MongoDB stores."""
-    st.subheader("Live project catalogue")
-    st.caption("Active project and source records from PostgreSQL. Select a project to open its brief and evidence notes.")
-    refresh_col, _ = st.columns([1, 5])
-    if refresh_col.button("Refresh source data", icon=":material/refresh:"):
-        clear_source_cache()
-        st.rerun()
     try:
         localities, listings = load_catalog()
     except Exception as exc:
@@ -3189,7 +3183,7 @@ def show_source_catalog(db, market_slug: str | None = None, demo_city: str = "Be
                 str(listing["project_name"]), listing.get("price_min"), listing.get("price_max"),
                 real_estate.get("rental_yield") if isinstance(real_estate, dict) else None, db=db,
                 locality_name=str(listing_area.iloc[0]["name"]) if not listing_area.empty else None,
-                city_name=city,
+                city_name=city_label,
             )
 
 
@@ -3298,3 +3292,4 @@ def main():
 
 
 main()
+
