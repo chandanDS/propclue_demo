@@ -41,8 +41,8 @@ DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@HOST:5432/propclue"
 
 ## What works in this demo
 
-- Buyer, Builder, and Channel partner demo sign-in/signup on local and hosted deployments. Buyer navigation has three focused pages: **Market overview · Live data**, **Map explorer**, and **Compare & save**. Buyer enquiries and visits are grouped inside Compare & save.
-- Market overview opens with a premium, continuously ticking IST clock dial and a connected-catalogue snapshot for projects, localities, stated units, RERA-reference presence, price coverage, and construction status. Live demand and transaction feeds are labeled as unconnected; the clock updates each second, while source figures refresh from the database separately.
+- Buyer, Builder, and Channel partner demo sign-in/signup on local and hosted deployments. Buyer navigation has three focused pages: **Search Property**, **Map Intelligence**, and **Compare & save**. Buyer enquiries and visits are grouped inside Compare & save.
+- The public landing page shows four compact connected-catalogue cards for projects, localities, stated units, and RERA-reference presence, plus three sign-in gated links into the buyer workspace.
 - The selected live project detail includes an explainable, partial **Builder evidence score** using observed completed catalogue records, RERA-reference coverage, and a verified city-directory rank where available. It reports evidence coverage and does not infer lifetime project count or completed square footage. If `GOOGLE_PLACES_API_KEY` is configured, users can make an explicit one-time Google Places request; exact-name average rating can contribute to that view's score. Google data is not cached or persisted. Google API usage may be billable; public Terms of Use and a Privacy Policy are required before public use.
 - Buyer enquiry form creates a project-scoped builder lead with a request ID, buyer-visible status, preferred follow-up channel, optional per-enquiry contact-email sharing, document requests, site-visit preference, and a 24-hour response target. The builder sees the routed request, can assign an owner, set follow-up deadlines, record contact attempts, schedule or complete visits, and mark booked or closed-lost outcomes. Both sides see the activity timeline.
 - Builder lead outcome metrics separate buyer-submitted workflow requests from seeded sample leads. Response time, visits, bookings, and closed-lost counts use only workflow requests. Campaign delivery receipts remain explicitly unconnected.
@@ -56,7 +56,7 @@ DATABASE_URL = "postgresql+psycopg://USER:PASSWORD@HOST:5432/propclue"
 - Project intelligence profiles, project saving, up-to-four project comparison, and CSV report downloads.
 - 36-month asking-price and simulated-transaction series stored separately, rental indicators, supply, absorption, and enquiry charts.
 - Transparent weighted locality demo score: connectivity 16%, employment access 14%, social infrastructure 13%, affordability 13%, price momentum 12%, rental demand 10%, supply-demand balance 10%, environmental quality 8%, and infrastructure certainty 4%.
-- Consent-gated hover capture for buyer project/locality cards across Market pulse, Discover, Map, Market intelligence, and Compare & saved. Hover events appear in the buyer activity timeline and do not affect the buyer-intent score.
+- Consent-gated hover capture for buyer project/locality cards across Search Property, Map Intelligence, Market intelligence, and Compare & saved. Hover events appear in the buyer activity timeline and do not affect the buyer-intent score.
 - Buyer event timeline and timestamped purpose-specific consent history.
 - Buyer intent scoring with recency decay and a reason list. Scores use demo engagement events only.
 - Builder portfolio filtering, consent-aware lead views, CSV export, segment filters, and simulated campaigns.
