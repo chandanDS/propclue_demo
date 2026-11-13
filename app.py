@@ -68,7 +68,7 @@ except ImportError:
 
 
 st.set_page_config(page_title="PropClue | Real estate intelligence", page_icon="⌂", layout="wide",
-                   initial_sidebar_state="expanded")
+                   initial_sidebar_state="collapsed")
 
 
 DATABASE_FALLBACK_NOTICE = ""
@@ -796,8 +796,7 @@ def safe_connection_error(exc: Exception) -> str:
     return message[:400] or type(exc).__name__
 
 
-def login_screen(db):
-    brand_lockup()
+def render_public_hero() -> None:
     st.markdown("""
     <style>
     .pc-home-hero{position:relative;overflow:hidden;min-height:390px;padding:2.2rem 2rem;border:1px solid #dce8ed;border-radius:28px;background:radial-gradient(ellipse at 77% 25%,rgba(28,183,155,.18),transparent 34%),linear-gradient(120deg,#071c2b 0%,#0b2639 56%,#123a49 100%);box-shadow:0 22px 54px rgba(7,30,48,.15);color:#f4f9fc}
@@ -825,14 +824,79 @@ def login_screen(db):
       </div>
     </section>
     """, unsafe_allow_html=True)
+
+
+def public_landing(db) -> None:
+    brand_col, spacer, login_col, signup_col = st.columns([1.2, 4.1, 1, 1.35], vertical_alignment="center")
+    with brand_col:
+        brand_lockup(compact=False)
+    with login_col:
+        if st.button("Log in", key="public-login", width="stretch"):
+            st.session_state["show_auth"] = True
+            st.session_state["login-mode"] = "Sign in"
+            st.rerun()
+    with signup_col:
+        if st.button("Create account", key="public-signup", type="primary", width="stretch"):
+            st.session_state["show_auth"] = True
+            st.session_state["login-mode"] = "Create account"
+            st.rerun()
+    render_public_hero()
+    st.markdown("### Property research, from locality to project")
+    step_cols = st.columns(3, gap="medium")
+    for col, title, body in zip(
+        step_cols,
+        ["Explore the market", "Focus the map", "Review with context"],
+        ["See locality signals and catalogue coverage.", "Search by locality or project and inspect the radius.", "Compare project details, source notes and buyer guidance."],
+    ):
+        with col.container(border=True):
+            st.markdown(f"**{title}**")
+            st.caption(body)
+    st.markdown("## Market pulse")
+    st.caption("A live catalogue snapshot. Counts describe source records; they are not verified sales or available inventory.")
+    try:
+        localities, listings = load_catalog()
+        market_names = localities[["city_slug", "city"]].dropna().drop_duplicates().sort_values("city")["city_slug"].tolist()
+        market_labels = dict(zip(
+            localities[["city_slug", "city"]].dropna().drop_duplicates()["city_slug"],
+            localities[["city_slug", "city"]].dropna().drop_duplicates()["city"],
+        ))
+        if not market_names:
+            st.info("No published market snapshots are available from the live source yet.")
+        else:
+            default_market = st.session_state.get("landing-market-pulse", "bangalore")
+            if default_market not in market_names:
+                default_market = market_names[0]
+            selected_market = st.selectbox(
+                "Market snapshot", market_names, index=market_names.index(default_market),
+                format_func=lambda slug: str(market_labels.get(slug, slug.replace("-", " ").title())),
+                key="landing-market-pulse",
+            )
+            render_market_pulse(
+                str(market_labels.get(selected_market, selected_market)),
+                listings[listings["city_slug"] == selected_market].copy(),
+                localities[localities["city_slug"] == selected_market].copy(),
+            )
+    except Exception as exc:
+        st.info("The connected market pulse is temporarily unavailable. Sign in to view the source-backed catalogue when the database is reachable.")
+        st.caption(f"Connection detail: {type(exc).__name__}.")
+    st.caption("PropClue supports research through ownership and registration. Confirm legal, bank, price and inventory details with the issuing authority and project team.")
+
+
+def login_screen(db):
+    brand_col, _, home_col = st.columns([1.2, 5, 1], vertical_alignment="center")
+    with brand_col:
+        brand_lockup(compact=False)
+    with home_col:
+        if st.button("← Home", key="auth-home", width="stretch"):
+            st.session_state["show_auth"] = False
+            st.rerun()
+    st.markdown("## Welcome to PropClue")
+    st.caption("Sign in or create a demo account to open your property research workspace.")
     left, right = st.columns([1.0, 1.0], gap="large")
     with left:
-        st.markdown("#### A clearer property decision, from area to project")
-        steps = st.columns(3)
-        steps[0].markdown("<div class='pc-home-step'><strong>01 · Explore</strong>Read locality and market signals.</div>", unsafe_allow_html=True)
-        steps[1].markdown("<div class='pc-home-step'><strong>02 · Focus</strong>Search a locality or project on the map.</div>", unsafe_allow_html=True)
-        steps[2].markdown("<div class='pc-home-step'><strong>03 · Decide</strong>Compare evidence and save your shortlist.</div>", unsafe_allow_html=True)
-        st.caption("Source records may be estimated or unverified. The demo does not independently confirm legal, title, tax, bank, price, or availability claims.")
+        st.markdown("#### Research a locality before choosing a project")
+        st.write("Explore connected project records, compare localities on the map and review an evidence-aware project brief.")
+        st.info("Live source fields and generated demo insights are labeled separately. Legal, title, tax, bank approval, price and availability claims are not independently verified.")
     with right:
         with st.container(border=True):
             st.subheader("Sign in or create a demo account")
@@ -943,7 +1007,6 @@ def brand_lockup(compact: bool = False):
 
 
 def top_header(title: str, subtitle: str = ""):
-    brand_lockup()
     st.title(title, anchor=False)
     if subtitle:
         st.caption(subtitle)
@@ -1084,7 +1147,7 @@ def show_overview(db, user: User, city: str, builder_id: int | None = None, show
 def show_discover(db, user: User, city: str, show_header: bool = True):
     if show_header:
         top_header("Discover projects", "Search active project listings from the selected live PropClue market.")
-    show_source_catalog(st.session_state.get("market_slug"))
+    show_source_catalog(db, st.session_state.get("market_slug"), city, user=user)
 
 def show_project_profile(db, user: User, project: Project):
     loc = project.locality
@@ -2902,8 +2965,8 @@ def show_admin(db, user: User):
 
 
 def show_market_workspace(db, user: User, city: str):
-    top_header("Market overview · Live data", "Browse the connected PropClue project catalogue and linked locality intelligence in one place.")
-    show_source_catalog(db, st.session_state.get("market_slug"), city)
+    top_header("Market overview", "Browse live project records and open a focused Area / Project Brief.")
+    show_source_catalog(db, st.session_state.get("market_slug"), city, user=user)
 
 
 def render_market_pulse(city_label: str, city_listings: pd.DataFrame, city_localities: pd.DataFrame) -> None:
@@ -3264,10 +3327,10 @@ def show_builder_score_panel(city_listings: pd.DataFrame, listing: pd.Series, ci
         st.caption("Google Maps · rating and rating count fetched live for this view. Data is not stored. Verify the profile match before use.")
 
 
-def show_source_catalog(db, market_slug: str | None = None, demo_city: str = "Bengaluru"):
+def show_source_catalog(db, market_slug: str | None = None, demo_city: str = "Bengaluru", user: User | None = None):
     """Read-only live view of the real PropClue PostgreSQL and MongoDB stores."""
-    st.subheader("Project listings and locality intelligence")
-    st.caption("Live PropClue catalogue from PostgreSQL, with linked locality intelligence from MongoDB. This view is read-only.")
+    st.subheader("Live project catalogue")
+    st.caption("Active project and source records from PostgreSQL. Select a project to open its brief and evidence notes.")
     refresh_col, _ = st.columns([1, 5])
     if refresh_col.button("Refresh source data", icon=":material/refresh:"):
         clear_source_cache()
@@ -3331,9 +3394,6 @@ def show_source_catalog(db, market_slug: str | None = None, demo_city: str = "Be
     st.caption(f"Selected market: **{city_label}** · {chosen_city_slug}")
     if city_listings.empty:
         st.info("This market has published locality records but no active project listings in the connected PostgreSQL catalogue.")
-    render_market_pulse(city_label, city_listings, city_localities)
-    st.markdown("")
-
     st.info("These are the records currently stored in your PropClue databases. A source row or a populated field does not by itself mean that a price, document, score, or availability has been independently verified.", icon=":material/info:")
     st.markdown("#### Project listings · PostgreSQL")
     search = st.text_input("Search project, builder or locality", placeholder="Try a project or builder name", key="source-listing-search")
@@ -3380,7 +3440,7 @@ def show_source_catalog(db, market_slug: str | None = None, demo_city: str = "Be
         st.info("No project listings match this search.")
     st.caption(f"Showing {len(display_listings):,} active database rows. Blank source fields are shown as missing; no unit area or per-square-foot price is inferred.")
     if listing is not None:
-        st.caption("Select a row above to focus its details and locality intelligence.")
+        st.caption("Select a row above to focus its Area / Project Brief.")
         with st.container(border=True):
             st.markdown(f"#### {listing['project_name']}")
             st.caption(f"{listing['builder_name'] or 'Builder not provided'} · {listing['Type']} · {listing['Locality']}")
@@ -3413,16 +3473,25 @@ def show_source_catalog(db, market_slug: str | None = None, demo_city: str = "Be
                     str(listing["project_name"]), area_row.get("lifestyle_score"), area_row.get("connectivity_score"),
                     age, demo_pois, scope_label="Area / Project Brief · final demo rating",
                 )
+                if user is not None and user.role == "buyer":
+                    gap_analysis = listing_doc.get("gap_analysis", {}) if isinstance(listing_doc, dict) else {}
+                    buyer_note = gap_analysis.get("b2c_recommendation") if isinstance(gap_analysis, dict) else None
+                    if not buyer_note:
+                        score_value = area_row.get("composite_score")
+                        score_summary = f"The linked locality score is {float(score_value):.1f}/10" if pd.notna(score_value) else "The linked locality has no stored composite score"
+                        price_summary = f"The source lists {listing['Price range']}" if listing.get("Price range") != "Not listed" else "No price range is stored for this project"
+                        rera_summary = "A RERA reference is present but has not been verified" if listing.get("RERA") != "Not provided" else "No RERA reference is stored"
+                        buyer_note = f"{score_summary}. {price_summary}; {rera_summary}. Compare the source date, title documents, bank letter and actual unit availability before deciding."
+                    st.info(f"**Buyer insight**\n\n{buyer_note}", icon=":material/lightbulb:")
+            elif user is not None and user.role == "buyer":
+                st.info(
+                    "**Buyer insight**\n\nThis project does not have a unique locality match in the published catalogue. Treat nearby locality scores and price context as unlinked until the source mapping is corrected; verify documents, bank approval and unit availability directly.",
+                    icon=":material/lightbulb:",
+                )
             render_property_legal_and_returns(
                 str(listing["project_name"]), listing.get("price_min"), listing.get("price_max"),
                 real_estate.get("rental_yield") if isinstance(real_estate, dict) else None,
             )
-
-    st.markdown("#### Locality intelligence · linked to selected project")
-    preferred_slug = str(listing["locality_match_slug"]) if listing is not None and pd.notna(listing.get("locality_match_slug")) else None
-    selected_project_name = str(listing["project_name"]) if listing is not None else None
-    show_locality_intelligence(city_localities, city_listings, chosen_city_slug,
-                               preferred_slug=preferred_slug, selected_project=selected_project_name)
 
 
 
@@ -3430,21 +3499,24 @@ def main():
     with SessionLocal() as db:
         user = current_user(db)
         if not user:
-            login_screen(db)
+            if st.session_state.get("show_auth", False):
+                login_screen(db)
+            else:
+                public_landing(db)
             return
-        with st.sidebar:
-            brand_lockup(compact=True)
-            st.caption(f"{user.name} · {user.role.title()}")
-            if DATABASE_FALLBACK_NOTICE:
-                st.warning(DATABASE_FALLBACK_NOTICE, icon=":material/cloud_off:")
-            city = get_city_filter(db, user)
-            if st.button("Sign out", width="stretch"):
-                st.session_state.pop("user_id", None)
-                st.rerun()
-            st.markdown("---")
+
+        st.markdown("""
+        <style>
+        section[data-testid="stSidebar"],button[data-testid="stSidebarCollapsedControl"]{display:none!important}
+        div[data-testid="stPageLink"] a{justify-content:center!important;border-radius:999px!important;border:1px solid #dbe7eb!important;background:#fff!important;color:#24465c!important;font-weight:700!important;padding:.62rem .7rem!important;text-align:center!important;white-space:nowrap!important}
+        div[data-testid="stPageLink"] a:hover{border-color:#0d9488!important;background:#effaf8!important;color:#087e70!important}
+        @media(max-width:760px){div[data-testid="stPageLink"] a{font-size:.76rem!important;padding:.5rem .35rem!important;white-space:normal!important}}
+        </style>
+        """, unsafe_allow_html=True)
+        city = st.session_state.get("city_filter", user.city)
         page_groups = {
             "buyer": [
-                st.Page(lambda: show_market_workspace(db, user, city), title="Market overview · Live data", url_path="market-overview", icon=":material/monitoring:"),
+                st.Page(lambda: show_market_workspace(db, user, city), title="Market overview", url_path="market-overview", icon=":material/monitoring:"),
                 st.Page(lambda: show_map(db, user, city), title="Map explorer", url_path="map-explorer", icon=":material/map:"),
                 st.Page(lambda: show_compare_workspace(db, user), title="Compare & save", url_path="compare-save", icon=":material/bookmark:"),
             ],
@@ -3465,21 +3537,45 @@ def main():
         }
         role_pages = page_groups.get(user.role, page_groups["buyer"])
         navigation = st.navigation({user.role.title(): role_pages}, position="hidden")
-        with st.sidebar:
-            st.markdown("**WORKSPACE MODULES**")
-            for page in role_pages:
-                st.page_link(page)
-            st.markdown("---")
-            st.markdown("**LLM TOKEN USAGE**")
-            st.table(pd.DataFrame([
-                {"Stage": "Input", "Tokens": 0},
-                {"Stage": "Output", "Tokens": 0},
-                {"Stage": "Intent", "Tokens": 0},
-                {"Stage": "SQL generation", "Tokens": 0},
-                {"Stage": "AI insights", "Tokens": 0},
-            ]))
-            st.caption("Zero external LLM calls in this demo.")
-            st.caption("SYNTHETIC DEMO · not verified")
+
+        header_left, header_center, header_right = st.columns([1.25, 4.7, 1.7], vertical_alignment="center")
+        with header_left:
+            brand_lockup(compact=False)
+        with header_center:
+            module_cols = st.columns(len(role_pages), gap="small")
+            labels_by_role = {
+                "buyer": ["Market overview", "Map explorer", "Compare & save"],
+                "builder": ["Portfolio MIS", "Market intelligence", "Buyer demand"],
+                "channel_partner": ["Partner workspace"],
+                "admin": ["Platform", "Data coverage", "Map explorer", "Markets"],
+            }
+            nav_labels = labels_by_role.get(user.role, labels_by_role["buyer"])
+            for col, page, label in zip(module_cols, role_pages, nav_labels):
+                with col:
+                    st.page_link(page, label=label, width="stretch")
+        with header_right:
+            st.caption(f"{user.name} · {user.role.replace('_', ' ').title()}")
+            controls = st.columns([1.1, 1])
+            with controls[0].expander("Tokens · 0"):
+                st.markdown("**LLM token usage**")
+                st.table(pd.DataFrame([
+                    {"Stage": "Input", "Tokens": 0},
+                    {"Stage": "Output", "Tokens": 0},
+                    {"Stage": "Intent", "Tokens": 0},
+                    {"Stage": "SQL generation", "Tokens": 0},
+                    {"Stage": "AI insights", "Tokens": 0},
+                ]))
+                st.caption("Zero external LLM calls in this demo.")
+            if controls[1].button("Sign out", key="top-sign-out", width="stretch"):
+                st.session_state.pop("user_id", None)
+                st.session_state["show_auth"] = False
+                st.rerun()
+
+        market_row = st.columns([1.8, 2.2, 1.8])
+        with market_row[1]:
+            city = get_city_filter(db, user)
+        if DATABASE_FALLBACK_NOTICE:
+            st.warning(DATABASE_FALLBACK_NOTICE, icon=":material/cloud_off:")
         map_route = bool(re.search(r"/(?:map-explorer|admin-map)/?$", str(getattr(st.context, "url", ""))))
         st.markdown("""
         <style>
