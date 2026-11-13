@@ -378,11 +378,16 @@ _HOVER_MAP_COMPONENT = st.components.v2.component(
         const center=[Number(data.center_lat),Number(data.center_lon)];
         if(!map){
           map=L.map(mapEl,{scrollWheelZoom:true}).setView(center,Number(data.zoom)||12);
-          L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
           parentElement.__pcHoverMap=map;
           map.on('mouseout',()=>{});
         }else if(parentElement.__pcCenter!==center.join(',')||parentElement.__pcZoom!==Number(data.zoom)){
           map.setView(center,Number(data.zoom)||12);
+        }
+        const baseTileUrl='https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+        if(parentElement.__pcBaseTileUrl!==baseTileUrl){
+          map.eachLayer(layer=>{if(layer instanceof L.TileLayer)map.removeLayer(layer);});
+          L.tileLayer(baseTileUrl,{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+          parentElement.__pcBaseTileUrl=baseTileUrl;
         }
         parentElement.__pcCenter=center.join(',');
         parentElement.__pcZoom=Number(data.zoom)||12;
@@ -2010,7 +2015,7 @@ def show_map(db, user: User, city: str, show_header: bool = True):
                 "note": "Hover over any locality, project or radius point to show its details here. Distances and places labeled intelligence_demo are synthetic, straight-line estimates.",
             },
         }
-        render_hover_map(data=map_payload, key=f"hover-map-{market_slug}-{center_slug}")
+        render_hover_map(data=map_payload, key=f"hover-map-v3-{market_slug}-{center_slug}")
         radius_anchor = str(selected_property["project_name"]) if selected_property is not None else str(center["name"])
         st.caption(f"Radius centered on {radius_anchor}. Project coordinates are approximate locality offsets. Map hover updates the adjacent detail pane; base map attribution: © OpenStreetMap contributors.")
         map_assist_col = st.columns([1, 2, 1])[1]
