@@ -64,13 +64,27 @@ export default function(component) {
   };
   let level=6, pinned=null, hovered=null, layers=[], selected=records.find(r=>r.id==='parcel-7');
   const text=(parent,tag,cls,value)=>{const el=document.createElement(tag);el.className=cls;el.textContent=value;parent.appendChild(el);return el;};
+  function childOf(r) {
+    if(r.level<6)return records.find(item=>item.level===r.level+1);
+    if(r.level===6)return records.find(item=>item.id===r.id.replace('parcel-','building-'));
+    return null;
+  }
+  const exploreLabels=['Explore districts','Explore cities','Explore zones','Explore localities','Explore projects','Explore parcels','Open building details'];
   function renderPanel(r) {
     selected=r; const panel=$('.gis-panel-content'); panel.replaceChildren();
     text(panel,'div','gis-eyebrow',levels[r.level]+' / '+(r.values['Parcel type']||'Spatial intelligence'));
     text(panel,'h2','',r.name);
     text(panel,'div','gis-subtitle',r.level>=5?'HSR Layout · Bengaluru · Karnataka':'India · '+r.name);
-    const pin=text(panel,'button','gis-pin',pinned?'Pinned · click to unpin':'Click a shape to pin details');
-    pin.type='button'; pin.onclick=()=>{if(pinned){pinned=null;draw();} };
+    const child=childOf(r);
+    if(child) {
+      const explore=text(panel,'button','gis-pin',exploreLabels[r.level]+' →');
+      explore.type='button';explore.onclick=()=>{if(map)jump(child);};
+    }
+    if(r.level>=6) {
+      const pin=text(panel,'button','gis-pin',pinned?'Pinned · click to unpin':'Pin property details');
+      pin.type='button';pin.onclick=()=>togglePin(r);
+    }
+    text(panel,'div','gis-subtitle',r.level<6?'Click a highlighted boundary to explore the next level.':child?'Click a parcel to pin it. Open building details to see its footprint.':'Click a property to pin its details.');
     const schema=r.level>=6?schemas.property:r.level===5?schemas.project:schemas.geography;
     let available=0,total=0;
     for(const [section,fields] of Object.entries(schema)) {
@@ -87,12 +101,17 @@ export default function(component) {
   function levelForZoom(z) {let i=0;while(i<zooms.length-1&&z>=zooms[i+1])i++;return i;}
   function color(r){return r.level>=6?({'Open land':'#8db694','Building':'#e5ba76','Apartment':'#8cb3c4'}[r.values['Parcel type']]||'#e5ba76'):'#9ab9a1';}
   function style(r,active=false){return {color:active?'#126b57':'#668b74',weight:active?3:1.5,fillColor:color(r),fillOpacity:active?.7:r.level<5?.12:.45};}
-  function jump(r) {pinned=null;hovered=null;map.setView([(r.bounds[0][0]+r.bounds[1][0])/2,(r.bounds[0][1]+r.bounds[1][1])/2],zooms[r.level]);draw();renderPanel(r);}
+  function jump(r) {pinned=null;hovered=null;selected=r;map.setView([(r.bounds[0][0]+r.bounds[1][0])/2,(r.bounds[0][1]+r.bounds[1][1])/2],zooms[r.level],{animate:false});draw();}
+  function togglePin(r) {
+    pinned=pinned?.id===r.id?null:r;renderPanel(r);
+    for(const item of layers)item.shape.setStyle(style(item.record,pinned?.id===item.record.id));
+    crumbs();
+  }
   function crumbs() {
     const nav=$('.gis-crumbs');nav.replaceChildren();
     for(let i=0;i<=Math.min(level,5);i++) {const b=text(nav,'button',i===level?'active':'',names[i]);b.type='button';b.onclick=()=>jump(records[i]);}
     if(level>=6){const b=text(nav,'button','active',levels[level]);b.type='button';b.onclick=()=>jump(selected.level===level?selected:records.find(r=>r.level===level));}
-    $('.gis-status').textContent=levels[level]+' layer · zoom '+map.getZoom()+' · '+(pinned?'Pinned':'Hover to inspect');
+    $('.gis-status').textContent=levels[level]+' layer · zoom '+map.getZoom()+' · '+(pinned?'Pinned':level<6?'Click to drill down':'Click to pin details');
   }
   function draw() {
     if(!map)return;
@@ -104,12 +123,12 @@ export default function(component) {
       shape.bindTooltip(r.name+(r.level>=6?' · '+r.values['Parcel type']:''),{sticky:true,direction:'top'});
       shape.on('mouseover',()=>{hovered=r;shape.setStyle(style(r,true));shape.bringToFront();if(!pinned)renderPanel(r);});
       shape.on('mouseout',()=>{hovered=null;shape.setStyle(style(r,pinned?.id===r.id));});
-      shape.on('click',e=>{window.L.DomEvent.stopPropagation(e);pinned=pinned?.id===r.id?null:r;renderPanel(r);for(const item of layers)item.shape.setStyle(style(item.record,pinned?.id===item.record.id));crumbs();});
-      shape.on('dblclick',e=>{
-        window.L.DomEvent.stopPropagation(e);
-        const next=r.level<6?records.find(item=>item.level===r.level+1):records.find(item=>item.id===r.id.replace('parcel-','building-'));
-        if(next&&next.id!==r.id)jump(next);
-      });
+      const activate=()=>{const next=childOf(r);if(r.level<6&&next)jump(next);else togglePin(r);};
+      shape.on('click',e=>{window.L.DomEvent.stopPropagation(e);activate();});
+      const element=shape.getElement();
+      element.setAttribute('tabindex','0');element.setAttribute('role','button');
+      element.setAttribute('aria-label',r.name+' · '+(r.level<6?exploreLabels[r.level]:'Pin property details'));
+      element.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();activate();}});
       layers.push({remove:()=>shape.remove(),shape,record:r});
     }
     if(pinned&&pinned.level!==level)pinned=null;

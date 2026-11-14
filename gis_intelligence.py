@@ -23,6 +23,7 @@ _CSS = r"""
 .gis-shell{position:relative;height:760px;min-height:640px;width:100%;overflow:hidden;border:1px solid #d8e2dd;border-radius:18px;background:#e8ece5;color:#20382f;font:14px/1.5 'Segoe UI',Arial,sans-serif;isolation:isolate}
 .gis-shell *{box-sizing:border-box}.gis-shell button,.gis-shell input{font:inherit}.gis-shell button{cursor:pointer}.gis-shell button:focus-visible,.gis-shell input:focus-visible{outline:3px solid #158278;outline-offset:2px}.gis-map{position:absolute!important;inset:0;z-index:0;background:#e7ece2}.gis-toolbar{position:absolute;z-index:600;top:18px;left:20px;right:20px;display:flex;align-items:center;gap:16px;pointer-events:none}.gis-toolbar>*{pointer-events:auto}.gis-brand{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:700;background:#fff;padding:11px 16px;border-radius:12px;box-shadow:0 3px 16px #19372d18}.gis-logo{font-size:29px;color:#167566}.gis-brand small{display:block;font-size:8px;letter-spacing:1.7px;color:#78877f;font-weight:600}.gis-search{position:relative;display:flex;align-items:center;gap:12px;background:white;padding:8px 10px 8px 17px;border:1px solid #e3e9e5;border-radius:12px;width:min(530px,48%);box-shadow:0 4px 22px #19372d1a}.gis-search>span{font-size:26px;color:#5a7566}.gis-search input{width:100%;min-width:0;border:0;outline:0;background:white;color:#20382f;font-size:13px}.gis-search button{border:0;background:#176657;color:white;border-radius:7px;padding:9px 12px;font-size:12px}.gis-results{position:absolute;top:calc(100% + 8px);left:0;right:0;background:white;border:1px solid #dce5df;border-radius:10px;padding:6px;box-shadow:0 9px 25px #20382f25;max-height:280px;overflow:auto}.gis-results button{display:block;text-align:left;width:100%;background:white;color:#20382f;padding:10px}.gis-results button:hover{background:#edf5ef}.gis-fullscreen{margin-left:auto;border:1px solid #dce5df;border-radius:10px;padding:11px 13px;background:#fff;font-size:18px;box-shadow:0 3px 16px #19372d18;white-space:nowrap}.gis-fullscreen span{font-size:12px}.gis-demo{position:absolute;left:22px;top:99px;z-index:450;background:#fff9eb;border:1px solid #ead7ad;border-radius:7px;padding:6px 10px;color:#89601a;font-size:10px;letter-spacing:.6px;font-weight:700}.gis-demo span{font-weight:400;letter-spacing:0;margin-left:8px}.gis-pane{position:absolute;right:20px;top:99px;bottom:72px;z-index:500;width:330px;background:#fffffff7;border:1px solid #e0e7e1;border-radius:13px;box-shadow:0 6px 30px #19372d16;overflow-y:auto;overscroll-behavior:contain}.gis-panel-content{padding:21px}.gis-eyebrow{font-size:10px;color:#267d6d;font-weight:800;letter-spacing:1.5px;text-transform:uppercase}.gis-pane h2{font-size:24px;line-height:1.2;margin:9px 0 6px;letter-spacing:-.7px}.gis-subtitle{font-size:12px;color:#77877d;margin-bottom:14px}.gis-pin{border:1px solid #d2e2d8;border-radius:7px;background:#eef6f0;color:#286d59;font-size:11px;padding:7px 10px}.gis-section{font-size:10px;letter-spacing:1.5px;font-weight:750;color:#7d8b81;margin:23px 0 6px;text-transform:uppercase}.gis-row{display:flex;justify-content:space-between;gap:15px;align-items:baseline;padding:9px 0;border-bottom:1px solid #edf0ec;font-size:12px}.gis-row>span:first-child{color:#65776c}.gis-row>span:last-child{text-align:right;max-width:58%;overflow-wrap:anywhere;font-weight:600}.gis-missing{color:#c87616}.gis-note{font-size:11px;color:#89958c;margin:18px 0 0;padding:10px 0;border-top:1px solid #e8ede8}.gis-tools{position:absolute;z-index:450;left:22px;top:154px;display:flex;flex-direction:column;box-shadow:0 2px 15px #1d3e2920;border-radius:10px;overflow:hidden}.gis-tools button{border:0;border-bottom:1px solid #e0e8df;background:white;width:40px;height:40px;font-size:23px;color:#365744}.gis-tools button:hover{background:#eaf5ed}.gis-legend{position:absolute;z-index:450;bottom:90px;left:22px;background:#fffffff0;border:1px solid #dce5df;padding:12px 15px;border-radius:10px;display:flex;gap:14px;font-size:11px;align-items:center}.gis-legend b{font-size:9px;letter-spacing:1px;color:#6e8174}.gis-legend span{display:flex;align-items:center;gap:5px}.gis-legend i{width:10px;height:10px;display:inline-block;border-radius:2px}.gis-bottom{position:absolute;z-index:500;left:22px;right:22px;bottom:22px;display:flex;align-items:center;justify-content:space-between;gap:12px}.gis-crumbs{display:flex;flex-wrap:wrap;gap:5px;background:#fffffff0;padding:7px;border-radius:9px;box-shadow:0 3px 18px #19372d15}.gis-crumbs button{font-size:11px;border:0;background:transparent;color:#5c7162;padding:6px 9px;border-radius:5px}.gis-crumbs button.active{background:#1a6b58;color:white}.gis-status{background:#fffffff0;font-size:10px;color:#5b7564;border-radius:7px;padding:10px;white-space:nowrap}.gis-error{position:absolute;z-index:700;left:22px;bottom:145px;background:#fff4df;border:1px solid #e2be76;padding:10px;border-radius:8px;max-width:450px;font-size:12px}.gis-shell:fullscreen{height:100vh;width:100vw;border:0;border-radius:0}.gis-shell.gis-expanded{position:fixed;inset:0;width:100vw;height:100vh;z-index:99999;border-radius:0}
 .gis-shell [hidden]{display:none!important}
+.gis-shell .gis-pin{margin:0 6px 10px 0}.gis-shell path.leaflet-interactive:focus{outline:0;stroke:#126b57;stroke-width:4}
 /* Core positioning is inline so Leaflet also renders correctly inside Shadow DOM. */
 .gis-shell .leaflet-container{overflow:hidden;outline:0}.gis-shell .leaflet-pane,.gis-shell .leaflet-tile,.gis-shell .leaflet-marker-icon,.gis-shell .leaflet-marker-shadow,.gis-shell .leaflet-tile-container,.gis-shell .leaflet-pane>svg,.gis-shell .leaflet-pane>canvas,.gis-shell .leaflet-zoom-box{position:absolute;left:0;top:0}.gis-shell img.leaflet-tile{max-width:none!important;max-height:none!important;padding:0}.gis-shell .leaflet-pane>svg{max-width:none!important;max-height:none!important}.gis-shell .leaflet-control-container{position:absolute;inset:0;pointer-events:none}.gis-shell .leaflet-bottom{position:absolute;bottom:0;z-index:1000}.gis-shell .leaflet-right{right:0}.gis-shell .leaflet-control{pointer-events:auto}.gis-shell .leaflet-control-attribution{background:#ffffffe0;font:9px/1.5 Arial;padding:0 5px}.gis-shell .leaflet-interactive{cursor:pointer}.gis-shell .leaflet-tooltip{position:absolute;padding:5px 9px;background:white;border:1px solid #bbcfc1;border-radius:5px;font-size:11px;white-space:nowrap;pointer-events:none;color:#234f3b;box-shadow:0 2px 9px #20382f18}
 .gis-shell .leaflet-map-pane{z-index:0}.gis-shell .leaflet-tile-pane{z-index:200}.gis-shell .leaflet-overlay-pane{z-index:400}.gis-shell .leaflet-shadow-pane{z-index:500}.gis-shell .leaflet-marker-pane{z-index:600}.gis-shell .leaflet-tooltip-pane{z-index:650}.gis-shell .leaflet-popup-pane{z-index:700}.gis-shell .leaflet-pane>svg{pointer-events:none}.gis-shell .leaflet-pane>svg path.leaflet-interactive{pointer-events:auto}.gis-shell .leaflet-zoom-animated{transform-origin:0 0}
@@ -98,13 +99,27 @@ export default function(component) {
   };
   let level=6, pinned=null, hovered=null, layers=[], selected=records.find(r=>r.id==='parcel-7');
   const text=(parent,tag,cls,value)=>{const el=document.createElement(tag);el.className=cls;el.textContent=value;parent.appendChild(el);return el;};
+  function childOf(r) {
+    if(r.level<6)return records.find(item=>item.level===r.level+1);
+    if(r.level===6)return records.find(item=>item.id===r.id.replace('parcel-','building-'));
+    return null;
+  }
+  const exploreLabels=['Explore districts','Explore cities','Explore zones','Explore localities','Explore projects','Explore parcels','Open building details'];
   function renderPanel(r) {
     selected=r; const panel=$('.gis-panel-content'); panel.replaceChildren();
     text(panel,'div','gis-eyebrow',levels[r.level]+' / '+(r.values['Parcel type']||'Spatial intelligence'));
     text(panel,'h2','',r.name);
     text(panel,'div','gis-subtitle',r.level>=5?'HSR Layout · Bengaluru · Karnataka':'India · '+r.name);
-    const pin=text(panel,'button','gis-pin',pinned?'Pinned · click to unpin':'Click a shape to pin details');
-    pin.type='button'; pin.onclick=()=>{if(pinned){pinned=null;draw();} };
+    const child=childOf(r);
+    if(child) {
+      const explore=text(panel,'button','gis-pin',exploreLabels[r.level]+' →');
+      explore.type='button';explore.onclick=()=>{if(map)jump(child);};
+    }
+    if(r.level>=6) {
+      const pin=text(panel,'button','gis-pin',pinned?'Pinned · click to unpin':'Pin property details');
+      pin.type='button';pin.onclick=()=>togglePin(r);
+    }
+    text(panel,'div','gis-subtitle',r.level<6?'Click a highlighted boundary to explore the next level.':child?'Click a parcel to pin it. Open building details to see its footprint.':'Click a property to pin its details.');
     const schema=r.level>=6?schemas.property:r.level===5?schemas.project:schemas.geography;
     let available=0,total=0;
     for(const [section,fields] of Object.entries(schema)) {
@@ -121,12 +136,17 @@ export default function(component) {
   function levelForZoom(z) {let i=0;while(i<zooms.length-1&&z>=zooms[i+1])i++;return i;}
   function color(r){return r.level>=6?({'Open land':'#8db694','Building':'#e5ba76','Apartment':'#8cb3c4'}[r.values['Parcel type']]||'#e5ba76'):'#9ab9a1';}
   function style(r,active=false){return {color:active?'#126b57':'#668b74',weight:active?3:1.5,fillColor:color(r),fillOpacity:active?.7:r.level<5?.12:.45};}
-  function jump(r) {pinned=null;hovered=null;map.setView([(r.bounds[0][0]+r.bounds[1][0])/2,(r.bounds[0][1]+r.bounds[1][1])/2],zooms[r.level]);draw();renderPanel(r);}
+  function jump(r) {pinned=null;hovered=null;selected=r;map.setView([(r.bounds[0][0]+r.bounds[1][0])/2,(r.bounds[0][1]+r.bounds[1][1])/2],zooms[r.level],{animate:false});draw();}
+  function togglePin(r) {
+    pinned=pinned?.id===r.id?null:r;renderPanel(r);
+    for(const item of layers)item.shape.setStyle(style(item.record,pinned?.id===item.record.id));
+    crumbs();
+  }
   function crumbs() {
     const nav=$('.gis-crumbs');nav.replaceChildren();
     for(let i=0;i<=Math.min(level,5);i++) {const b=text(nav,'button',i===level?'active':'',names[i]);b.type='button';b.onclick=()=>jump(records[i]);}
     if(level>=6){const b=text(nav,'button','active',levels[level]);b.type='button';b.onclick=()=>jump(selected.level===level?selected:records.find(r=>r.level===level));}
-    $('.gis-status').textContent=levels[level]+' layer · zoom '+map.getZoom()+' · '+(pinned?'Pinned':'Hover to inspect');
+    $('.gis-status').textContent=levels[level]+' layer · zoom '+map.getZoom()+' · '+(pinned?'Pinned':level<6?'Click to drill down':'Click to pin details');
   }
   function draw() {
     if(!map)return;
@@ -138,12 +158,12 @@ export default function(component) {
       shape.bindTooltip(r.name+(r.level>=6?' · '+r.values['Parcel type']:''),{sticky:true,direction:'top'});
       shape.on('mouseover',()=>{hovered=r;shape.setStyle(style(r,true));shape.bringToFront();if(!pinned)renderPanel(r);});
       shape.on('mouseout',()=>{hovered=null;shape.setStyle(style(r,pinned?.id===r.id));});
-      shape.on('click',e=>{window.L.DomEvent.stopPropagation(e);pinned=pinned?.id===r.id?null:r;renderPanel(r);for(const item of layers)item.shape.setStyle(style(item.record,pinned?.id===item.record.id));crumbs();});
-      shape.on('dblclick',e=>{
-        window.L.DomEvent.stopPropagation(e);
-        const next=r.level<6?records.find(item=>item.level===r.level+1):records.find(item=>item.id===r.id.replace('parcel-','building-'));
-        if(next&&next.id!==r.id)jump(next);
-      });
+      const activate=()=>{const next=childOf(r);if(r.level<6&&next)jump(next);else togglePin(r);};
+      shape.on('click',e=>{window.L.DomEvent.stopPropagation(e);activate();});
+      const element=shape.getElement();
+      element.setAttribute('tabindex','0');element.setAttribute('role','button');
+      element.setAttribute('aria-label',r.name+' · '+(r.level<6?exploreLabels[r.level]:'Pin property details'));
+      element.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();activate();}});
       layers.push({remove:()=>shape.remove(),shape,record:r});
     }
     if(pinned&&pinned.level!==level)pinned=null;
