@@ -999,8 +999,8 @@ def brand_lockup(compact: bool = False):
         st.image("assets/propclue-logo.png", width=size)
     with name:
         font_size = "1.25rem" if compact else "1.6rem"
-        word_color = "#F5F8FC" if compact else "#0C213C"
-        accent = "#5FE3B3" if compact else "#0D9488"
+        word_color = "#0C213C"
+        accent = "#0D9488"
         tagline_size = ".76rem" if compact else ".86rem"
         st.markdown(f"<div style='line-height:1.15'><b style='font-size:{font_size};letter-spacing:.08em;color:{word_color}'>PROPCLUE</b><br><small style='font-size:{tagline_size};letter-spacing:.12em;color:{accent};font-weight:800'>REAL ESTATE INTELLIGENCE</small></div>", unsafe_allow_html=True)
 
@@ -1799,9 +1799,8 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     hsr_slug = "bangalore-hsr-layout"
     map_modes = ["Live locality map"]
     if market_slug == "bangalore" and hsr_slug in locality_slugs:
-        map_modes.append("HSR building demo · zoomedin_demo")
         map_modes.append("GIS intelligence · parcel explorer")
-    map_mode = st.segmented_control("Map layer", map_modes, default=map_modes[0], key="map-layer-mode-v2")
+    map_mode = st.segmented_control("Map layer", map_modes, default=map_modes[0], key="map-layer-mode-v3")
     if map_mode == "GIS intelligence · parcel explorer":
         from gis_intelligence import render_gis_intelligence
 
@@ -3277,15 +3276,64 @@ def show_source_catalog(db, market_slug: str | None = None, demo_city: str = "Be
     st.caption(f"Selected market: **{city_label}** · {chosen_city_slug}")
     if city_listings.empty:
         st.info("This market has published locality records but no active project listings in the connected PostgreSQL catalogue.")
-    st.info("These are the records currently stored in your PropClue databases. A source row or a populated field does not by itself mean that a price, document, score, or availability has been independently verified.", icon=":material/info:")
-    st.markdown("#### Project listings · PostgreSQL")
-    search = st.text_input("Search project, builder or locality", placeholder="Try a project or builder name", key="source-listing-search")
+    st.caption("Source catalogue · Prices, documents and availability require independent verification.")
+    st.markdown("### Find your next property")
+    st.caption("Refine the catalogue, then select a project to explore its details alongside the results.")
+    filter_prefix = f"catalog-filter-{chosen_city_slug}-"
+    with st.container(border=True, key="catalog-filters"):
+        search = st.text_input("Search project, builder or locality", placeholder="Search by project, builder or address…", key=filter_prefix + "search", icon=":material/search:")
+        filter_cols = st.columns(4)
+        locality_filter_names = {str(row.locality_slug): locality_names.get(row.locality_match_slug, str(row.locality_slug).replace("-", " ").title()) for row in city_listings.itertuples()}
+        filter_fields = [("Locality", "locality_slug"), ("Builder", "builder_name"),
+                         ("Property type", "project_type"), ("Construction status", "construction_status")]
+        selections = {}
+        for col, (label, field) in zip(filter_cols, filter_fields):
+            options = sorted(city_listings[field].dropna().astype(str).loc[lambda x: x.str.strip().ne("")].unique())
+            with col:
+                selections[field] = st.multiselect(label, options, key=filter_prefix + field,
+                    format_func=lambda value, field=field: locality_filter_names.get(value, value) if field == "locality_slug" else value.replace("_", " ").title(),
+                    placeholder={"Locality": "All localities", "Builder": "All builders", "Property type": "All property types", "Construction status": "All statuses"}[label])
+        budget_cols = st.columns([1.2, 1.2, 1.6, 1.6], vertical_alignment="bottom")
+        min_budget = budget_cols[0].number_input("Min budget (₹ Cr)", min_value=0.0, value=0.0, step=0.25, key=filter_prefix + "min")
+        max_budget = budget_cols[1].number_input("Max budget (₹ Cr)", min_value=0.0, value=0.0, step=0.25, key=filter_prefix + "max", help="Leave at 0 for no upper limit.")
+        documents = budget_cols[2].multiselect("Source documents", ["RERA reference", "Brochure", "Floor plan"], key=filter_prefix + "documents", placeholder="Any documentation")
+        sort_order = budget_cols[3].selectbox("Sort projects", ["Recently updated", "Price: low to high", "Price: high to low", "Project name"], key=filter_prefix + "sort")
+        include_unpriced = st.checkbox("Include projects without a listed price", value=True, key=filter_prefix + "unpriced")
+        if st.button("Reset filters", icon=":material/filter_alt_off:", key="catalog-reset"):
+            for state_key in list(st.session_state):
+                if state_key.startswith(filter_prefix):
+                    del st.session_state[state_key]
+            st.rerun()
+    total_projects = len(city_listings)
     if search.strip():
         query = search.strip().casefold()
         mask = city_listings[["project_name", "builder_name", "locality_slug", "address"]].fillna("").astype(str).apply(
             lambda column: column.str.casefold().str.contains(query, regex=False)
         ).any(axis=1)
         city_listings = city_listings[mask]
+    for field, selected in selections.items():
+        if selected:
+            city_listings = city_listings[city_listings[field].astype(str).isin(selected)]
+    low = pd.to_numeric(city_listings["price_min"], errors="coerce").fillna(pd.to_numeric(city_listings["price_max"], errors="coerce"))
+    high = pd.to_numeric(city_listings["price_max"], errors="coerce").fillna(low)
+    priced = low.notna() & high.notna()
+    budget_match = priced.copy()
+    if min_budget:
+        budget_match &= high >= min_budget * 10_000_000
+    if max_budget:
+        budget_match &= low <= max_budget * 10_000_000
+    city_listings = city_listings[budget_match | (~priced & include_unpriced)]
+    for label, field in [("RERA reference", "rera_number"), ("Brochure", "brochure_url"), ("Floor plan", "floor_plan_url")]:
+        if label in documents:
+            city_listings = city_listings[city_listings[field].fillna("").astype(str).str.strip().ne("")]
+    if max_budget and max_budget < min_budget:
+        st.warning("Set a maximum budget greater than or equal to the minimum budget.")
+        city_listings = city_listings.iloc[:0]
+    sort_field = {"Recently updated": "updated_at", "Project name": "project_name"}.get(sort_order)
+    if sort_field:
+        city_listings = city_listings.sort_values(sort_field, ascending=sort_order != "Recently updated", na_position="last", kind="stable")
+    else:
+        city_listings = city_listings.assign(_sort_price=low).sort_values("_sort_price", ascending=sort_order == "Price: low to high", na_position="last", kind="stable")
     display_listings = city_listings.copy()
     display_listings["Price range"] = display_listings.apply(
         lambda row: "–".join(money(v, True) for v in [row["price_min"], row["price_max"]] if pd.notna(v)) or "Not listed",
@@ -3300,83 +3348,88 @@ def show_source_catalog(db, market_slug: str | None = None, demo_city: str = "Be
     display_listings["Type"] = display_listings["project_type"].fillna("Not provided").str.replace("_", " ").str.title()
     display_listings["Construction status"] = display_listings["construction_status"].fillna("Not provided").str.replace("_", " ").str.title()
     display_listings["Bank approval"] = "Not verified"
-    listing_columns = ["project_name", "builder_name", "Type", "Locality", "Price range", "units", "Construction status", "possession_date", "RERA", "Bank approval", "source", "data_confidence", "Updated"]
-    listing_display = display_listings[listing_columns].rename(columns={
-        "project_name": "Project", "builder_name": "Builder",
-        "units": "Units stated", "construction_status": "Construction status", "possession_date": "Possession stated",
-        "source": "Source", "data_confidence": "Source confidence",
-    })
+    listing_columns = ["project_name", "Locality", "Price range", "Construction status"]
+    listing_display = display_listings[listing_columns].rename(columns={"project_name": "Project"})
+    results_pane, details_pane = st.columns([1.15, 1], gap="large")
     listing_key_hash = hashlib.sha1("|".join(display_listings["id"].astype(str)).encode("utf-8")).hexdigest()[:10]
     listing_event = None
     selected_id = None
     listing = None
-    if not display_listings.empty:
-        listing_event = st.dataframe(listing_display.reset_index(drop=True), width="stretch", hide_index=True, height=380,
-                 alt="Active PropClue project listing records read from PostgreSQL",
-                 on_select="rerun", selection_mode="single-row",
-                 selection_default={"selection": {"rows": [0]}}, key=f"live-listing-row-selection-{chosen_city_slug}-{listing_key_hash}")
-        selected_rows = listing_event.selection.rows if hasattr(listing_event, "selection") else []
-        selected_row = selected_rows[0] if selected_rows else 0
-        selected_id = int(display_listings.reset_index(drop=True).iloc[selected_row]["id"])
-        listing = display_listings.loc[display_listings["id"] == selected_id].iloc[0]
-    else:
-        st.info("No project listings match this search.")
-    st.caption(f"Showing {len(display_listings):,} active database rows. Blank source fields are shown as missing; no unit area or per-square-foot price is inferred.")
-    if listing is not None:
-        st.caption("Select a row above to focus its Area / Project Brief.")
-        with st.container(border=True):
-            st.markdown(f"#### {listing['project_name']}")
-            st.caption(f"{listing['builder_name'] or 'Builder not provided'} · {listing['Type']} · {listing['Locality']}")
-            details = st.columns(4)
-            details[0].metric("Stored price range", listing["Price range"], border=True)
-            details[1].metric("Units stated", str(int(listing["units"])) if pd.notna(listing["units"]) else "Not provided", border=True)
-            details[2].metric("Construction", listing["Construction status"], border=True)
-            details[3].metric("RERA reference", str(listing["RERA"]), border=True)
-            st.write(f"**Address:** {listing['address'] or 'Not provided'}")
-            st.caption(f"Source: {listing['source'] or 'Not specified'} · confidence label: {listing['data_confidence'] or 'Not specified'} · last updated: {listing['Updated']}")
-            links = st.columns(3)
-            for col, label, field in zip(links, ["Project page", "Brochure", "Floor plan"], ["project_url", "brochure_url", "floor_plan_url"]):
-                url = listing.get(field)
-                if isinstance(url, str) and url.startswith("https://"):
-                    col.link_button(label, url, width="stretch")
-            matched_slug = str(listing.get("locality_match_slug") or "")
-            listing_area = city_localities[city_localities["slug"].astype(str) == matched_slug]
-            listing_doc = {}
-            if matched_slug:
-                try:
-                    listing_doc = load_area_dna(matched_slug) or {}
-                except Exception:
+    with results_pane:
+        st.markdown(f"#### {len(display_listings):,} projects found")
+        st.caption(f"From {total_projects:,} active projects in {city_label}")
+        if not display_listings.empty:
+            listing_event = st.dataframe(listing_display.reset_index(drop=True), width="stretch", hide_index=True, height=560,
+                     alt="Active PropClue project listing records read from PostgreSQL",
+                     on_select="rerun", selection_mode="single-row",
+                     selection_default={"selection": {"rows": [0]}}, key=f"live-listing-row-selection-{chosen_city_slug}-{listing_key_hash}")
+            selected_rows = listing_event.selection.rows if hasattr(listing_event, "selection") else []
+            selected_row = selected_rows[0] if selected_rows else 0
+            selected_id = int(display_listings.reset_index(drop=True).iloc[selected_row]["id"])
+            listing = display_listings.loc[display_listings["id"] == selected_id].iloc[0]
+        else:
+            st.info("No project listings match this search.")
+        st.caption("Select a row to view property details on the right. Missing source fields remain marked as unavailable.")
+    with details_pane:
+        st.markdown("#### Property overview")
+        if listing is not None:
+            with st.container(border=True, key="catalog-property-detail"):
+                st.markdown(f"#### {listing['project_name']}")
+                st.caption(f"{listing['builder_name'] or 'Builder not provided'} · {listing['Type']} · {listing['Locality']}")
+                details = st.columns(2)
+                details[0].metric("Stored price range", listing["Price range"], border=True)
+                details[1].metric("Units stated", str(int(listing["units"])) if pd.notna(listing["units"]) else "Not provided", border=True)
+                st.write(f"**Construction:** {listing['Construction status']}")
+                st.write(f"**RERA reference:** {listing['RERA']}")
+                st.write(f"**Address:** {listing['address'] or 'Not provided'}")
+                st.caption(f"Source: {listing['source'] or 'Not specified'} · confidence label: {listing['data_confidence'] or 'Not specified'} · last updated: {listing['Updated']}")
+                links = st.columns(3)
+                for col, label, field in zip(links, ["Project page", "Brochure", "Floor plan"], ["project_url", "brochure_url", "floor_plan_url"]):
+                    url = listing.get(field)
+                    if isinstance(url, str) and url.startswith("https://"):
+                        col.link_button(label, url, width="stretch")
+                st.caption(f"Possession stated: {listing.get('possession_date') or 'Not provided'} · Bank approval: Not verified")
+                with st.expander("Area intelligence, legal checks & returns"):
+                    matched_slug = str(listing.get("locality_match_slug") or "")
+                    listing_area = city_localities[city_localities["slug"].astype(str) == matched_slug]
                     listing_doc = {}
-            real_estate = listing_doc.get("real_estate", {}) if isinstance(listing_doc, dict) else {}
-            if not listing_area.empty:
-                area_row = listing_area.iloc[0]
-                demo_pois = intelligence_demo_pois(float(area_row["latitude"]), float(area_row["longitude"]), 10, matched_slug)
-                age = 1 + int(hashlib.sha256(f"listing-map:{int(listing['id'])}".encode()).hexdigest()[12:16], 16) % 35
-                render_area_project_brief(
-                    str(listing["project_name"]), area_row.get("lifestyle_score"), area_row.get("connectivity_score"),
-                    age, demo_pois, scope_label="Area / Project Brief · final demo rating",
-                )
-                if user is not None and user.role == "buyer":
-                    gap_analysis = listing_doc.get("gap_analysis", {}) if isinstance(listing_doc, dict) else {}
-                    buyer_note = gap_analysis.get("b2c_recommendation") if isinstance(gap_analysis, dict) else None
-                    if not buyer_note:
-                        score_value = area_row.get("composite_score")
-                        score_summary = f"The linked locality score is {float(score_value):.1f}/10" if pd.notna(score_value) else "The linked locality has no stored composite score"
-                        price_summary = f"The source lists {listing['Price range']}" if listing.get("Price range") != "Not listed" else "No price range is stored for this project"
-                        rera_summary = "A RERA reference is present but has not been verified" if listing.get("RERA") != "Not provided" else "No RERA reference is stored"
-                        buyer_note = f"{score_summary}. {price_summary}; {rera_summary}. Compare the source date, title documents, bank letter and actual unit availability before deciding."
-                    st.info(f"**Buyer insight**\n\n{buyer_note}", icon=":material/lightbulb:")
-            elif user is not None and user.role == "buyer":
-                st.info(
-                    "**Buyer insight**\n\nThis project does not have a unique locality match in the published catalogue. Treat nearby locality scores and price context as unlinked until the source mapping is corrected; verify documents, bank approval and unit availability directly.",
-                    icon=":material/lightbulb:",
-                )
-            render_property_legal_and_returns(
-                str(listing["project_name"]), listing.get("price_min"), listing.get("price_max"),
-                real_estate.get("rental_yield") if isinstance(real_estate, dict) else None, db=db,
-                locality_name=str(listing_area.iloc[0]["name"]) if not listing_area.empty else None,
-                city_name=city_label,
-            )
+                    if matched_slug:
+                        try:
+                            listing_doc = load_area_dna(matched_slug) or {}
+                        except Exception:
+                            listing_doc = {}
+                    real_estate = listing_doc.get("real_estate", {}) if isinstance(listing_doc, dict) else {}
+                    if not listing_area.empty:
+                        area_row = listing_area.iloc[0]
+                        demo_pois = intelligence_demo_pois(float(area_row["latitude"]), float(area_row["longitude"]), 10, matched_slug)
+                        age = 1 + int(hashlib.sha256(f"listing-map:{int(listing['id'])}".encode()).hexdigest()[12:16], 16) % 35
+                        render_area_project_brief(
+                            str(listing["project_name"]), area_row.get("lifestyle_score"), area_row.get("connectivity_score"),
+                            age, demo_pois, scope_label="Area / Project Brief · final demo rating",
+                        )
+                        if user is not None and user.role == "buyer":
+                            gap_analysis = listing_doc.get("gap_analysis", {}) if isinstance(listing_doc, dict) else {}
+                            buyer_note = gap_analysis.get("b2c_recommendation") if isinstance(gap_analysis, dict) else None
+                            if not buyer_note:
+                                score_value = area_row.get("composite_score")
+                                score_summary = f"The linked locality score is {float(score_value):.1f}/10" if pd.notna(score_value) else "The linked locality has no stored composite score"
+                                price_summary = f"The source lists {listing['Price range']}" if listing.get("Price range") != "Not listed" else "No price range is stored for this project"
+                                rera_summary = "A RERA reference is present but has not been verified" if listing.get("RERA") != "Not provided" else "No RERA reference is stored"
+                                buyer_note = f"{score_summary}. {price_summary}; {rera_summary}. Compare the source date, title documents, bank letter and actual unit availability before deciding."
+                            st.info(f"**Buyer insight**\n\n{buyer_note}", icon=":material/lightbulb:")
+                    elif user is not None and user.role == "buyer":
+                        st.info(
+                            "**Buyer insight**\n\nThis project does not have a unique locality match in the published catalogue. Treat nearby locality scores and price context as unlinked until the source mapping is corrected; verify documents, bank approval and unit availability directly.",
+                            icon=":material/lightbulb:",
+                        )
+                    render_property_legal_and_returns(
+                        str(listing["project_name"]), listing.get("price_min"), listing.get("price_max"),
+                        real_estate.get("rental_yield") if isinstance(real_estate, dict) else None, db=db,
+                        locality_name=str(listing_area.iloc[0]["name"]) if not listing_area.empty else None,
+                        city_name=city_label,
+                    )
+        else:
+            st.info("Adjust your filters to find a property. Its details will appear here.")
 
 
 
@@ -3393,9 +3446,19 @@ def main():
         st.markdown("""
         <style>
         section[data-testid="stSidebar"],button[data-testid="stSidebarCollapsedControl"]{display:none!important}
-        div[data-testid="stPageLink"] a{justify-content:center!important;border-radius:999px!important;border:1px solid #dbe7eb!important;background:#fff!important;color:#24465c!important;font-weight:700!important;padding:.62rem .7rem!important;text-align:center!important;white-space:nowrap!important}
-        div[data-testid="stPageLink"] a:hover{border-color:#0d9488!important;background:#effaf8!important;color:#087e70!important}
-        @media(max-width:760px){div[data-testid="stPageLink"] a{font-size:.76rem!important;padding:.5rem .35rem!important;white-space:normal!important}}
+        .st-key-primary-navigation {background:#edf3f6;border:1px solid #dbe6ec;border-radius:16px;padding:6px;box-shadow:0 3px 12px rgba(15,35,55,.04)}
+        .st-key-primary-navigation a {justify-content:center!important;border-radius:11px!important;padding:.7rem .65rem!important;color:#476176!important;font-weight:650!important;white-space:nowrap!important;transition:background .15s,box-shadow .15s}
+        .st-key-primary-navigation a p {font-size:.9rem!important;font-weight:650!important;letter-spacing:-.02em}
+        .st-key-primary-navigation a:hover {background:#fff!important;color:#0f766e!important}
+        .st-key-primary-navigation a[aria-current="page"] {background:linear-gradient(120deg,#0c213c,#155e66)!important;color:white!important;box-shadow:0 3px 10px #123a4926}
+        .pc-account {display:flex;align-items:center;gap:.6rem;padding:.45rem .7rem;background:white;border:1px solid #deE8ed;border-radius:14px;min-width:0}
+        .pc-avatar {display:flex;align-items:center;justify-content:center;flex-shrink:0;width:34px;height:34px;border-radius:50%;background:#e2f5ef;color:#087e70;font-size:.8rem;font-weight:800}
+        .pc-account-copy {min-width:0;line-height:1.25}.pc-account-label {display:block;font-size:.62rem;color:#688095;letter-spacing:.06em;text-transform:uppercase}
+        .pc-account-copy strong {display:block;font-size:.86rem;color:#102b43;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .pc-account-role {display:inline-block;font-size:.65rem;color:#087e70;font-weight:650}
+        .st-key-catalog-filters {background:white;box-shadow:0 4px 18px #123a4906;border-radius:18px}
+        .st-key-catalog-property-detail {background:white;border-top:3px solid #0d9488;border-radius:16px;box-shadow:0 6px 24px #123a4909}
+        @media(max-width:760px){.st-key-primary-navigation a {white-space:normal!important;padding:.5rem .3rem!important}.st-key-primary-navigation a p{font-size:.78rem!important}}
         </style>
         """, unsafe_allow_html=True)
         city = st.session_state.get("city_filter", user.city)
@@ -3430,7 +3493,7 @@ def main():
         header_left, header_center, market_header, header_right = st.columns([1.4, 4.8, 2.1, 2.8], vertical_alignment="center")
         with header_left:
             brand_lockup(compact=True)
-        with header_center:
+        with header_center, st.container(key="primary-navigation"):
             module_cols = st.columns(len(role_pages), gap="small")
             labels_by_role = {
                 "buyer": ["Search Property", "Map Intelligence", "Compare & save"],
@@ -3441,12 +3504,14 @@ def main():
             nav_labels = labels_by_role.get(user.role, labels_by_role["buyer"])
             for col, page, label in zip(module_cols, role_pages, nav_labels):
                 with col:
-                    st.page_link(page, label=label, width="stretch")
+                    nav_icon = {"Search Property": ":material/search:", "Map Intelligence": ":material/map:", "Compare & save": ":material/bookmarks:"}.get(label, ":material/dashboard:")
+                    st.page_link(page, label=label, icon=nav_icon, width="stretch")
         with market_header:
             city = get_city_filter(db, user)
         with header_right:
             user_col, signout_col = st.columns([1.55, .9], vertical_alignment="center")
-            user_col.markdown(f"<div style='display:flex;align-items:center;gap:.38rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.78rem;color:#24465c'><strong>{html.escape(user.name)}</strong><span style='font-size:.68rem;color:#688095'>{html.escape(user.role.replace('_', ' ').title())}</span></div>", unsafe_allow_html=True)
+            initials = html.escape("".join(part[0] for part in user.name.split()[:2]).upper() or "U")
+            user_col.markdown(f"<div class='pc-account'><div class='pc-avatar'>{initials}</div><div class='pc-account-copy'><span class='pc-account-label'>Logged in</span><strong>{html.escape(user.name)}</strong><span class='pc-account-role'>{html.escape(user.role.replace('_', ' ').title())}</span></div></div>", unsafe_allow_html=True)
             if signout_col.button("Sign out", key="top-sign-out", width="stretch", icon=":material/logout:"):
                 st.session_state.pop("user_id", None)
                 st.session_state["show_auth"] = False
@@ -3454,7 +3519,7 @@ def main():
 
         if DATABASE_FALLBACK_NOTICE:
             st.warning(DATABASE_FALLBACK_NOTICE, icon=":material/cloud_off:")
-        current_path = urlparse(str(getattr(st.context, "url", ""))).path.rstrip("/")
+        current_path = "/" + navigation.url_path.strip("/")
         map_route = current_path.endswith(("/map-explorer", "/admin-map"))
         market_route = current_path.endswith(("/market-overview", "/market-intelligence", "/admin-market"))
         st.markdown("""

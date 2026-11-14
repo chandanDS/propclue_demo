@@ -9,10 +9,13 @@ class StreamlitDemoTests(unittest.TestCase):
         app_path = Path(__file__).resolve().parents[1] / "app.py"
         app = AppTest.from_file(str(app_path), default_timeout=90).run(timeout=90)
         self.assertFalse(app.exception)
-        self.assertTrue(any("Understand the property" in title.value for title in app.title))
-        app.button(key="demo-role-buyer").click().run(timeout=90)
+        self.assertTrue(any("Find the right" in block.value for block in app.markdown))
+        app.button(key="public-login").click().run(timeout=90)
+        username = next(widget for widget in app.text_input if widget.label == "Username or email")
+        username.set_value("ui.test.buyer")
+        next(button for button in app.button if button.label == "Continue to demo").click().run(timeout=90)
         self.assertFalse(app.exception)
-        self.assertTrue(any("Market pulse" in title.value for title in app.title))
+        self.assertTrue(any("Search Property" in title.value for title in app.title))
 
 
 if __name__ == "__main__":
