@@ -1800,7 +1800,13 @@ def show_map(db, user: User, city: str, show_header: bool = True):
     map_modes = ["Live locality map"]
     if market_slug == "bangalore" and hsr_slug in locality_slugs:
         map_modes.append("HSR building demo · zoomedin_demo")
+        map_modes.append("GIS intelligence · parcel explorer")
     map_mode = st.segmented_control("Map layer", map_modes, default=map_modes[0], key="map-layer-mode-v2")
+    if map_mode == "GIS intelligence · parcel explorer":
+        from gis_intelligence import render_gis_intelligence
+
+        render_gis_intelligence()
+        return
     zoomedin_demo_mode = map_mode == "HSR building demo · zoomedin_demo"
     locked_slug = st.session_state.get("locked_area_slug")
     if locked_slug in set(locality_slugs):
